@@ -12,6 +12,8 @@ import { Hero } from './hero.ts';
 import { Overlay } from './overlay.ts';
 import { Sfx } from './audio.ts';
 import { fmt, hintTerms } from './rules.ts';
+import { AutoPlayer } from './autoplay.ts';
+import { fallbackHeater, fallbackPigeon, fallbackTank } from './fallbacks.ts';
 
 // ---------- DOM ----------
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -76,7 +78,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.2;
-const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+const isTouch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window || new URLSearchParams(location.search).has('touch');
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
@@ -90,7 +92,7 @@ canvas.addEventListener('webglcontextlost', (e) => {
 });
 
 // ---------- assets ----------
-const assets: PropAssets = {};
+const assets: PropAssets = { heater: fallbackHeater(), tank: fallbackTank(), pigeon: fallbackPigeon() };
 const hero = new Hero();
 scene.add(hero.root);
 const loader = new GLTFLoader();
@@ -156,6 +158,7 @@ let explainTimer = 0;
 let shake = 0;
 let resultsTimer = -1;
 let lastShort: { pos: THREE.Vector3; text: string; t: number } | null = null;
+let auto: AutoPlayer | null = null;
 
 const ropeMesh = new THREE.Mesh(
   new THREE.CylinderGeometry(1, 1, 1, 6, 1),
@@ -181,6 +184,13 @@ function puff(at: THREE.Vector3, n = 10, power = 2.5): void {
   }
 }
 
+
+/** Wrap formula runs inside Hebrew text in LTR isolates so "4² + 4² = 32 > 25" never flips. */
+function ltrMath(text: string): string {
+  const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return esc.replace(/([−\-(]?[0-9a-zA-Z√][0-9a-zA-Z²³√+\-−=≤≥≠×·().,:\s]*[0-9a-zA-Z²)]|&[lg]t;)/g, (m) => (/[0-9²]/.test(m) && m.trim().length > 1 ? `<bdi dir="ltr">${m.trim()}</bdi> ` : m));
+}
+
 // ---------- level management ----------
 function loadLevel(i: number): void {
   levelIdx = i;
@@ -193,12 +203,13 @@ function loadLevel(i: number): void {
   scene.add(world.root);
   scene.fog = new THREE.Fog(level.night ? 0x1d2c5a : 0xf2b886, 60, 420);
   sim = new Sim(level);
+  auto = null;
   targetId = null;
   hintOn = false;
   lastShort = null;
   resultsTimer = -1;
   camYaw = level.start.yaw;
-  camPitch = 0.28;
+  camPitch = 0.16;
   camPos.set(level.start.x - 7 * Math.cos(camYaw), 25, level.start.z - 7 * Math.sin(camYaw));
   ui.levelChip.textContent = `שלב ${level.num} • ${level.title}`;
   ui.hintBtn.disabled = !level.hints;
@@ -217,8 +228,8 @@ function showIntro(): void {
   ui.intro.classList.remove('hidden');
   $('introKicker').textContent = `שלב ${level.num} מתוך ${LEVELS.length}${level.night ? ' · מבחן העברה' : ''}`;
   $('introTitle').textContent = level.title;
-  $('introSub').textContent = level.subtitle;
-  $('introGoal').textContent = level.goal;
+  $('introSub').innerHTML = ltrMath(level.subtitle);
+  $('introGoal').innerHTML = ltrMath(level.goal);
   $('introRope').innerHTML = `אורך החבל <bdi dir="ltr">L = ${level.L}</bdi> מ׳`;
 }
 
@@ -240,7 +251,7 @@ let jumpPressed = false;
 let focusHeld = false;
 let mouse = { x: -1, y: -1, moved: false, down: false, dragging: false, sx: 0, sy: 0 };
 let camYaw = 0;
-let camPitch = 0.28;
+let camPitch = 0.16;
 let lastDragT = -10;
 const stickVec = { x: 0, y: 0, id: -1 };
 
@@ -565,8 +576,8 @@ function updateCamera(dt: number): void {
   const now = performance.now() / 1000;
   const speed = Math.hypot(sim.vel.x, sim.vel.z);
   const userDragging = now - lastDragT < 1.5;
-  let dist = 6.2;
-  let height = 2.3;
+  let dist = 5.6;
+  let height = 1.9;
   let look = head.clone();
   let fov = 62;
   const active = sim.activeMark();
@@ -577,25 +588,45 @@ function updateCamera(dt: number): void {
       // frame the runner and the hook together, looking along the plank
       const markYaw = Math.atan2(active.dir.z, active.dir.x);
       if (!userDragging) camYaw = lerpAngle(camYaw, markYaw + Math.atan2(tgt.def.dir.z, tgt.def.dir.x) * 0.35, dt * 2.2);
-      look = head.clone().lerp(tgt.pos, 0.32);
-      dist = 7.5;
-      height = 2.6;
+      look = head.clone().lerp(tgt.pos, 0.42);
+      // tall hooks: back out and look at the middle of the scene instead of straight up
+      const rise = tgt.pos.y - head.y;
+      look.y = Math.min(look.y, head.y + 2.5);
+      dist = 5.4 + Math.max(0, rise - 6) * 0.45;
+      height = 1.2 + Math.max(0, rise - 6) * 0.35;
     } else if (speed > 2 && !userDragging) {
       camYaw = lerpAngle(camYaw, Math.atan2(sim.vel.z, sim.vel.x), dt * 1.6);
     }
   } else if (sim.state === 'swing' || sim.state === 'pull' || sim.state === 'rope') {
-    dist = 9.5;
-    height = 2.2;
-    look = head.clone().add(new THREE.Vector3(sim.vel.x, 0, sim.vel.z).multiplyScalar(0.25));
-    if (!userDragging) camYaw = lerpAngle(camYaw, Math.atan2(sim.swingDir.z, sim.swingDir.x), dt * 2.5);
+    dist = 6.8;
+    height = 1.4;
+    look = head.clone().add(new THREE.Vector3(sim.vel.x, 0, sim.vel.z).multiplyScalar(0.2));
+    // three-quarter view so the arc reads as an arc
+    if (!userDragging) camYaw = lerpAngle(camYaw, Math.atan2(sim.swingDir.z, sim.swingDir.x) - 0.55, dt * 2.5);
     fov = prefs.reduced ? 64 : 64 + Math.min(16, Math.hypot(sim.vel.x, sim.vel.y, sim.vel.z) * 0.9);
   } else if (sim.state === 'air') {
-    dist = 8.5;
+    dist = 7;
     fov = prefs.reduced ? 62 : 62 + Math.min(10, speed * 0.6);
-  } else if (sim.state === 'miss' || sim.state === 'bounce' || sim.state === 'climb') {
-    dist = 8;
-    height = 3.4;
-    look = head.clone().add(new THREE.Vector3(0, -0.6, 0));
+  } else if ((sim.state === 'miss' || sim.state === 'bounce' || sim.state === 'climb') && sim.awning) {
+    // side-on shot of the drop, the striped awning and the climb back
+    const w = sim.awning;
+    const side = new THREE.Vector3(-w.dir.z, 0, w.dir.x);
+    // pick the side with fewer poles in the way
+    const poles = [...(world?.anchors.values() ?? [])].map((v) => v.pos);
+    const blocked = (sgn: number) => poles.filter((p) => (p.x - w.x) * side.x * sgn + (p.z - w.z) * side.z * sgn > 2).length;
+    const sgn = blocked(-1) <= blocked(1) ? -1 : 1;
+    const want = new THREE.Vector3(w.x, w.top + 3.2, w.z).addScaledVector(side, 13 * sgn).addScaledVector(new THREE.Vector3(w.dir.x, 0, w.dir.z), 3);
+    camPos.lerp(want, 1 - Math.exp(-dt * 4));
+    camLook.lerp(head.clone().add(new THREE.Vector3(0, -1.6, 0)), 1 - Math.exp(-dt * 8));
+    camFov += (54 - camFov) * Math.min(1, dt * 4);
+    camera.fov = camFov;
+    camera.position.copy(camPos);
+    if (shake > 0 && !prefs.reduced) camera.position.add(new THREE.Vector3((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, 0));
+    shake = Math.max(0, shake - dt * 2.5);
+    camera.lookAt(camLook);
+    camera.updateProjectionMatrix();
+    camYaw = Math.atan2(w.dir.z, w.dir.x);
+    return;
   } else if (sim.state === 'finished') {
     dist = 5;
     height = 1.4;
@@ -719,7 +750,7 @@ function sqTerms(o: NonNullable<Sim['lastOutcome']>): string {
 function showExplain(kind: 'miss' | 'collapse'): void {
   const o = sim.lastOutcome;
   if (!o) return;
-  ui.explain.classList.remove('ok');
+  ui.explain.classList.remove('ok', 'hidden');
   ui.explainBadge.textContent = '✕';
   if (kind === 'miss') {
     ui.explainMath.innerHTML = `<bdi dir="ltr">${sqTerms(o)} = ${fmt(o.sumSq)}</bdi><br><bdi dir="ltr"><span class="bad">${fmt(o.sumSq)}</span> &gt; ${fmt(o.Lsq)} = ${fmt(level.L)}²</bdi>`;
@@ -766,11 +797,11 @@ function showResults(): void {
       const f = a.frame;
       li.innerHTML = `זרוע ${f.post}-${f.beam}-${f.brace}: <bdi dir="ltr">${f.post}² + ${f.beam}² ${f.post ** 2 + f.beam ** 2 === f.brace ** 2 ? '=' : '≠'} ${f.brace}²</bdi>`;
     } else {
-      li.innerHTML = `<bdi dir="ltr">${terms} = ${sum} ${sum <= L2 ? '≤' : '>'} ${L2}</bdi>${a.note ? ` <small>· ${a.note}</small>` : ''}`;
+      li.innerHTML = `<bdi dir="ltr">${terms} = ${sum} ${sum <= L2 ? '≤' : '>'} ${L2}</bdi>${a.note && !/[²]/.test(a.note) ? ` <small>· ${ltrMath(a.note)}</small>` : ''}`;
     }
     ul.appendChild(li);
   }
-  $('resLesson').textContent = level.lesson;
+  $('resLesson').innerHTML = ltrMath(level.lesson);
   const next: string[] = [];
   if (medal !== 'gold') {
     if (sim.falls > 0) next.push('לזהב: בלי נפילות');
@@ -778,7 +809,8 @@ function showResults(): void {
     if (level.goldMark && !sim.usedMarks.includes(level.goldMark)) next.push('קפיצה מהסימן הרחוק ביותר שעדיין מגיע');
   }
   $('resNext').textContent = next.join(' · ');
-  $('btnNext').textContent = levelIdx < LEVELS.length - 1 ? 'לשלב הבא' : 'סיום — לשלבים';
+  $('btnNext').textContent = levelIdx < LEVELS.length - 1 ? 'לשלב הבא ◀' : 'סיום — לשלבים';
+  $('resChain').innerHTML = LEVELS.map((l, i) => `<span class="${best[l.id]?.medal ?? ''} ${i === levelIdx ? 'cur' : ''}">${l.num}</span>`).join('');
   ui.results.classList.remove('hidden');
   try {
     const all = store.get<unknown[]>('log', []);
@@ -901,7 +933,11 @@ function readInput(): Input {
 function frame(dt: number): void {
   if (screen === 'play') {
     updateTarget();
-    const inp = readInput();
+    let inp = readInput();
+    if (auto) {
+      inp = auto.input();
+      if (inp.targetId) targetId = inp.targetId;
+    }
     const wasFocus = sim.focusing;
     sim.update(dt, inp);
     if (sim.focusing && !wasFocus) sfx.focusOn();
@@ -1144,6 +1180,8 @@ window.__rh = {
     sim.state = 'ground';
   },
   anchors: (): AnchorDef[] => level.anchors,
+  autoplay: (plan?: string[]) => (auto = plan === undefined ? new AutoPlayer(sim) : new AutoPlayer(sim, plan)),
+  stopAuto: () => (auto = null),
 };
 
 // ---------- boot ----------

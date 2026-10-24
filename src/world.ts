@@ -471,7 +471,7 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
         track(new THREE.MeshStandardMaterial({ map: track(signTexture(signWords[signIdx++ % signWords.length], dy === 0 ? '#1f6f68' : '#b2462e', '#fff3dc')), side: THREE.DoubleSide, roughness: 0.7 })),
       );
       sign.position.copy(loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 1.7, (P.z + Pw.z) / 2)));
-      sign.rotation.y = Math.PI / 2;
+      sign.rotation.y = -Math.PI / 2;
       bracket.add(sign);
       rod(loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 0.2, (P.z + Pw.z) / 2 - 1.6)), loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 0.65, (P.z + Pw.z) / 2 - 1.6)), 0.02, cableMat, bracket);
       rod(loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 0.2, (P.z + Pw.z) / 2 + 1.6)), loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 0.65, (P.z + Pw.z) / 2 + 1.6)), 0.02, cableMat, bracket);
@@ -529,13 +529,48 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
   finishRing.rotation.x = -Math.PI / 2;
   finishRing.position.set(fx, fb.top + 0.03, fz);
   root.add(finishRing);
-  rod(new THREE.Vector3(fx, fb.top, fz - 2.4), new THREE.Vector3(fx, fb.top + 3.6, fz - 2.4), 0.07, darkMetal);
-  rod(new THREE.Vector3(fx, fb.top, fz + 2.4), new THREE.Vector3(fx, fb.top + 3.6, fz + 2.4), 0.07, darkMetal);
+  const ring2 = finishRing.clone();
+  ring2.scale.setScalar(0.62);
+  ring2.position.y += 0.01;
+  root.add(ring2);
+  const postMat = (() => {
+    const t = bandTex.clone();
+    t.needsUpdate = true;
+    t.repeat.set(1, 2.2);
+    track(t);
+    return track(new THREE.MeshStandardMaterial({ map: t, roughness: 0.6 }));
+  })();
+  const checker = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d')!;
+    for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
+      g.fillStyle = (x + y) % 2 ? '#1d1d1d' : '#f7f7f2';
+      g.fillRect(x * 16, y * 16, 16, 16);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return track(t);
+  })();
+  const flagMat = track(new THREE.MeshStandardMaterial({ map: checker, side: THREE.DoubleSide, roughness: 0.8 }));
+  const flags: THREE.Mesh[] = [];
+  for (const s of [-1, 1]) {
+    const post = new THREE.Mesh(cylGeo, postMat);
+    post.scale.set(0.16, 4.4, 0.16);
+    post.position.set(fx, fb.top + 2.2, fz + s * 2.6);
+    post.castShadow = true;
+    root.add(post);
+    const flag = new THREE.Mesh(track(new THREE.PlaneGeometry(1.2, 0.8, 4, 1)), flagMat);
+    flag.position.set(fx, fb.top + 4.75, fz + s * 3.25);
+    flag.rotation.y = Math.PI / 2;
+    root.add(flag);
+    flags.push(flag);
+  }
   const banner = new THREE.Mesh(
-    track(new THREE.PlaneGeometry(4.8, 1.1)),
-    track(new THREE.MeshStandardMaterial({ map: track(signTexture('סיום', '#ff8a1a', '#fff8ea')), side: THREE.DoubleSide, emissive: 0x552200, emissiveIntensity: night ? 1.5 : 0.2 })),
+    track(new THREE.PlaneGeometry(5, 1.25)),
+    track(new THREE.MeshStandardMaterial({ map: track(signTexture('סיום', '#c8382a', '#fff8ea')), side: THREE.DoubleSide, emissive: 0x551100, emissiveIntensity: night ? 1.5 : 0.25 })),
   );
-  banner.position.set(fx, fb.top + 3.1, fz);
+  banner.position.set(fx, fb.top + 3.7, fz);
   banner.rotation.y = -Math.PI / 2;
   root.add(banner);
 
@@ -685,6 +720,8 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
       }
     }
     for (const [i, c] of laundry.entries()) c.rotation.y = Math.sin(t * 1.7 + i) * 0.25;
+    for (const [i, f] of flags.entries()) f.rotation.x = Math.sin(t * 3 + i) * 0.2;
+    finishRing.scale.setScalar(1 + Math.sin(t * 3) * 0.04);
     for (const p of pigeons) {
       if (p.flying > 0) {
         p.flying -= dt;

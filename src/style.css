@@ -816,3 +816,126 @@ body.touch #explain {
     display: none;
   }
 }
+
+/* results layout after mockup 04: card on the right, the cheering runner stays visible */
+#results {
+  place-items: center end;
+  background: linear-gradient(90deg, transparent 30%, rgba(31, 79, 82, 0.25));
+  backdrop-filter: none;
+}
+#results .result-card {
+  margin-inline-start: 4vw;
+  position: relative;
+  padding-top: 46px;
+}
+#resTitle {
+  position: absolute;
+  top: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, #3a9a4a, #2a7a38);
+  color: #fff;
+  border: 4px solid var(--cream);
+  border-radius: 22px;
+  padding: 6px 34px;
+  white-space: nowrap;
+  box-shadow: var(--shadow);
+}
+#resLines li.ok {
+  background: #e2f2d6;
+}
+#resLines li.bad {
+  background: #f8ded8;
+}
+#resLines li {
+  margin-bottom: 6px;
+}
+.chain {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 14px;
+}
+.chain span {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 800;
+  background: #c9cfd0;
+  color: #fff;
+  border: 2px solid #fff;
+}
+.chain span.gold {
+  background: radial-gradient(circle at 35% 30%, #fff3b0, #f2b632 45%, #b07a12);
+}
+.chain span.silver {
+  background: radial-gradient(circle at 35% 30%, #ffffff, #c9d1d6 45%, #7f8a90);
+}
+.chain span.bronze {
+  background: radial-gradient(circle at 35% 30%, #ffe0c0, #cd8a4b 45%, #7d4a1f);
+}
+.chain span.cur {
+  outline: 3px solid var(--orange);
+}
+@media (max-width: 760px) {
+  #results {
+    place-items: center;
+  }
+  #results .result-card {
+    margin: 30px 0 0;
+  }
+}
+
+@media (max-height: 520px) {
+  #prompt {
+    display: none !important;
+  }
+  .pill,
+  .round {
+    height: 44px;
+    font-size: 17px;
+  }
+  .round {
+    width: 44px;
+  }
+  #focus {
+    transform: scale(0.75);
+    transform-origin: bottom left;
+  }
+  body.touch #focus {
+    bottom: calc(150px + var(--safe-b));
+    transform: scale(0.62);
+  }
+  .tbtn.big {
+    width: 104px;
+    height: 104px;
+  }
+  .tbtn.green,
+  .tbtn.teal {
+    width: 72px;
+    height: 72px;
+  }
+  .tbtn.green {
+    right: calc(134px + var(--safe-r));
+  }
+  .tbtn.teal {
+    bottom: calc(136px + var(--safe-b));
+  }
+  #stick {
+    width: 124px;
+    height: 124px;
+  }
+  #toast {
+    top: 76px;
+    font-size: 18px;
+  }
+  #explain .math {
+    font-size: 24px;
+  }
+  body.touch #buttons {
+    top: 52px;
+  }
+}

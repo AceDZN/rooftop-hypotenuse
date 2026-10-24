@@ -21,6 +21,7 @@ export class Hero {
   private handBone: THREE.Object3D | null = null;
   private fallback: THREE.Group | null = null;
   usesModel = false;
+  private animTime = 0;
 
   constructor() {
     this.root.add(this.body);
@@ -147,6 +148,8 @@ export class Hero {
         break;
     }
     this.mixer?.update(dt);
+    this.animTime += dt;
+    if (this.fallback) animateFallback(this.fallback, sim.state, speed, this.animTime);
 
     // body orientation: hang along the rope while swinging/pulling
     let q = yawQ;
@@ -197,20 +200,97 @@ function aimBone(bone: THREE.Object3D, child: THREE.Object3D, target: THREE.Vect
   bone.quaternion.copy(parentWorld.invert().multiply(newWorld));
 }
 
+interface Rig {
+  group: THREE.Group;
+  armL: THREE.Object3D;
+  armR: THREE.Object3D;
+  legL: THREE.Object3D;
+  legR: THREE.Object3D;
+  torso: THREE.Object3D;
+}
+
 function makeFallback(): THREE.Group {
   const g = new THREE.Group();
   const hoodie = new THREE.MeshStandardMaterial({ color: 0xf08a2c, roughness: 0.8 });
   const shorts = new THREE.MeshStandardMaterial({ color: 0x2f9c8f, roughness: 0.8 });
   const skin = new THREE.MeshStandardMaterial({ color: 0xc98a62, roughness: 0.7 });
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.45, 4, 8), hoodie);
-  torso.position.y = 1.15;
-  const legs = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.5, 4, 8), shorts);
-  legs.position.y = 0.55;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), skin);
-  head.position.y = 1.6;
-  for (const m of [torso, legs, head]) {
-    m.castShadow = true;
-    g.add(m);
+  const hair = new THREE.MeshStandardMaterial({ color: 0x2a1c14, roughness: 0.9 });
+  const shoe = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.6 });
+  const brass = new THREE.MeshStandardMaterial({ color: 0xc8962e, metalness: 0.7, roughness: 0.35 });
+  const torso = new THREE.Group();
+  torso.position.y = 0.95;
+  g.add(torso);
+  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.36, 4, 10), hoodie);
+  chest.position.y = 0.25;
+  torso.add(chest);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 12), skin);
+  head.position.y = 0.68;
+  torso.add(head);
+  const curls = new THREE.Mesh(new THREE.SphereGeometry(0.165, 12, 10, 0, Math.PI * 2, 0, Math.PI / 1.8), hair);
+  curls.position.y = 0.71;
+  torso.add(curls);
+  const limb = (len: number, r: number, m: THREE.Material) => {
+    const pivot = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 8), m);
+    mesh.position.y = -len / 2 - r;
+    pivot.add(mesh);
+    return pivot;
+  };
+  const armL = limb(0.42, 0.06, hoodie);
+  armL.position.set(0, 0.48, 0.25);
+  const armR = limb(0.42, 0.06, hoodie);
+  armR.position.set(0, 0.48, -0.25);
+  const gaunt = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.075, 0.24, 10), brass);
+  gaunt.position.y = -0.45;
+  armR.add(gaunt);
+  torso.add(armL, armR);
+  const legL = limb(0.5, 0.08, shorts);
+  legL.position.set(0, 0.95, 0.11);
+  const legR = limb(0.5, 0.08, shorts);
+  legR.position.set(0, 0.95, -0.11);
+  for (const l of [legL, legR]) {
+    const s2 = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.1, 0.12), shoe);
+    s2.position.set(0.05, -0.72, 0);
+    l.add(s2);
   }
-  return g;
+  g.add(legL, legR);
+  g.traverse((o) => ((o as THREE.Mesh).castShadow = true));
+  // the fallback faces +X; rotate so it faces +Z like a glTF character
+  g.rotation.y = -Math.PI / 2;
+  const outer = new THREE.Group();
+  outer.add(g);
+  outer.userData.rig = { group: g, armL, armR, legL, legR, torso } satisfies Rig;
+  return outer;
+}
+
+export function animateFallback(fb: THREE.Group, state: string, speed: number, t: number): void {
+  const r = fb.userData.rig as Rig | undefined;
+  if (!r) return;
+  const run = state === 'ground' || state === 'dash' ? Math.min(1, speed / 6) : 0;
+  const ph = t * (6 + speed * 1.2);
+  const sw = Math.sin(ph) * 0.9 * run;
+  r.legL.rotation.z = sw;
+  r.legR.rotation.z = -sw;
+  r.armL.rotation.z = -sw * 0.8;
+  r.armR.rotation.z = sw * 0.8;
+  r.torso.rotation.z = -0.15 * run;
+  if (state === 'swing' || state === 'pull' || state === 'rope') {
+    r.armR.rotation.z = Math.PI * 0.95;
+    r.armL.rotation.z = 0.6;
+    r.legL.rotation.z = 0.5;
+    r.legR.rotation.z = 0.2;
+  } else if (state === 'air' || state === 'miss' || state === 'bounce') {
+    r.armL.rotation.z = 2.4 + Math.sin(t * 20) * 0.4;
+    r.armR.rotation.z = 2.2 + Math.cos(t * 20) * 0.4;
+    r.legL.rotation.z = 0.6;
+    r.legR.rotation.z = -0.3;
+  } else if (state === 'climb') {
+    r.armL.rotation.z = 2.8 + Math.sin(t * 12) * 0.4;
+    r.armR.rotation.z = 2.8 - Math.sin(t * 12) * 0.4;
+    r.legL.rotation.z = Math.sin(t * 12) * 0.5;
+    r.legR.rotation.z = -Math.sin(t * 12) * 0.5;
+  } else if (state === 'finished') {
+    r.armL.rotation.z = 3 + Math.sin(t * 8) * 0.2;
+    r.armR.rotation.z = 3 - Math.sin(t * 8) * 0.2;
+  }
 }

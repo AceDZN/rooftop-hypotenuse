@@ -33,7 +33,7 @@ async function session(name, viewport, touch, steps) {
   page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
   await page.goto(URL + (touch ? '?touch=1' : ''), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => typeof window.render_game_to_text === 'function');
-  await page.waitForFunction(() => Object.keys(JSON.parse(window.render_game_to_text()).assets).length === 4, null, { timeout: 30000 });
+  await page.waitForFunction(() => Object.keys(JSON.parse(window.render_game_to_text()).assets).length >= 5, null, { timeout: 30000 });
   for (const [shot, fn] of steps) {
     await page.evaluate(fn);
     await page.waitForTimeout(150);

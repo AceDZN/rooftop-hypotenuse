@@ -584,7 +584,7 @@ function updateHud(dt: number): void {
     else if (strip) prompt = sim.stripWaiting ? 'הקישו על מספר על הפיגום: משם תקפצו' : sim.stripTarget ? `רצים למספר ${sim.stripTarget}…` : 'קפיצה! (או הקישו על מספר)';
   }
   ui.prompt.textContent = prompt;
-  ui.prompt.classList.toggle('hidden', !prompt);
+  ui.prompt.classList.toggle('hidden', !prompt || !ui.coach.classList.contains('hidden'));
   ui.vignette.style.opacity = sim.state === 'decide' && !prefs.reduced ? '0.85' : '0';
   const v = Math.hypot(sim.vel.x, sim.vel.y, sim.vel.z);
   ui.speed.style.opacity = prefs.reduced ? '0' : String(Math.max(0, Math.min(0.7, (v - 10) / 10)));
@@ -595,7 +595,7 @@ function updateHud(dt: number): void {
 
 function legsLabel(hk: Hook): string {
   const s = hk.spec;
-  if (!level.labels) return '↔ ספרו נורות<br>↕ ספרו נורות';
+  if (!level.labels) return '↔ ?<br>↕ ?';
   if (s.frame) {
     const f = s.frame;
     let html = `<span>✓ בטווח</span><br>זרוע: <bdi dir="ltr">${f.post} · ${f.beam} · ${f.brace}</bdi>`;
@@ -654,7 +654,7 @@ function updateOverlay(): void {
   if (d && d.kind === 'hooks' && sim.state === 'decide' && screen === 'play') {
     const H = new THREE.Vector3(d.P.x, d.P.y, d.P.z);
     // keep about the same on-screen line width however far the camera framed the gap
-    overlay.thickness = Math.max(1, (camera.position.distanceTo(H) / 16) * (innerHeight < 500 ? 1.5 : 1));
+    overlay.thickness = Math.min(2, Math.max(1, (camera.position.distanceTo(H) / 18) * (innerHeight < 500 ? 1.2 : 1)));
     overlay.label(H.clone().add(new THREE.Vector3(0, -1.4, 0)), `L = ${level.L}`, 'gauntlet', camera, w, h);
     {
       for (const hk of sim.choices()) {
@@ -705,7 +705,7 @@ function updateOverlay(): void {
       const n = hoverTile ?? sim.stripTarget ?? sim.stripTile;
       const Hn = new THREE.Vector3(st.foot - n, st.top + 1, d.P.z);
       const corner = new THREE.Vector3(A.x, Hn.y, A.z);
-      overlay.thickness = Math.max(1, camera.position.distanceTo(A) / 16);
+      overlay.thickness = Math.min(2, Math.max(1, camera.position.distanceTo(A) / 18));
       overlay.line(Hn, corner, false, 0.06);
       overlay.line(corner, A, false, 0.06);
       overlay.line(Hn, A, true, 0.06);

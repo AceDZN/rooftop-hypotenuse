@@ -1347,3 +1347,28 @@ body.touch #prompt {
     padding: 6px 10px;
   }
 }
+
+#coach {
+  top: auto;
+  bottom: calc(16px + var(--safe-b));
+  width: min(560px, 62vw);
+}
+body.touch #coach {
+  width: min(520px, 54vw);
+}
+#prompt {
+  max-width: 52vw;
+  white-space: normal;
+  text-align: center;
+}
+@media (max-height: 520px) {
+  #coach {
+    top: auto;
+    bottom: 8px;
+  }
+}
+@media (max-width: 900px) and (min-height: 521px) {
+  #prompt {
+    bottom: calc(86px + var(--safe-b));
+  }
+}

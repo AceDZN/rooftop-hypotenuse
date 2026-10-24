@@ -21,6 +21,10 @@
   - Jump strip, mid-air chains, 3D courtyard, brackets, night bulbs.
 - 33 tests, browser verification, headless screenshots, docs.
 
+### v2.1 (25 Oct)
+
+- Fixed the user's playtest notes (see PLAYTEST.md v2.1). Tripo generation 5: a rigged flying pigeon with wing bones flapped in code.
+
 ## Next
 
 1. Put it in front of grade-8 kids: watch the first gap (do they understand "tap the hook"?), the strip timing, and L4/L6 difficulty.

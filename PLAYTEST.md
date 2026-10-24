@@ -1,5 +1,25 @@
 # Playtest log
 
+## v2.1 (25 Oct 2026): fixes from the user's play
+
+| Feedback | Fix |
+|---|---|
+| Runner ran in place, and nothing said to tap to start | The intro card had no styles and was invisible. It's now a real overlay (button, "tap anywhere / Enter"), and the runner idles until play starts. |
+| The first option was (almost) always correct | Rebalanced every level: tall, close decoys fail and far hooks win. A new test checks that hook 1 is wrong in ≥ 30% of decisions per level, and that the ⭐ hook is sometimes first, sometimes middle, sometimes last. |
+| After a fall the runner came back sideways | The runner now always faces the hooks while deciding and bouncing, and freezes on the airborne frame of the jump clip, not the crouch. |
+| Triangles hard to see on later levels and on mobile | A dark outline under every line, with thickness scaled to camera distance (capped). The leg labels stay on the hovered hook. |
+| Birds jittered with closed wings | A new Tripo flying pigeon (wings spread), rigged in Tripo. Wing bones flap in code with glide phases. Perched pigeons take off as flyers and come back; a small flock circles overhead. |
+| Finish ribbon faced the viewer, then had a post in front of it | The arch spans the running line and the banner faces the runner. On the final stretch the camera swings behind the runner, so the gate reads like a finish line. |
+| Night level was confusing | Removed the bulbs on poles and cables. Now: one white ruler at hand height (1 bulb per metre, every 5th big) and one column per hook in that hook's badge colour, plus faint triangles and a coach bubble explaining it. Dimmer windows, fewer stars. |
+| Modes should be more intuitive | Coach bubble the first time each level's twist appears. Strip: it waits, you tap the tile to jump from (or press jump to time it), with a live triangle from the hovered tile. Brackets: tags say "✓ in reach" plus the frame's sides, so the question is the right angle. Hook badges are colour-coded. |
+
+Verified after these fixes:
+- `npm test`: 34 passing.
+- Browser screenshots: night, strip waiting, finish chase cam, brackets, intro card, a flying-pigeon close-up across frames, and the phone 3D view.
+
+Not verified: real phones, real kids.
+
+
 ## v2 (24 Oct 2026): one-tap side-view swing runner
 
 ### Verified by automation

@@ -1,19 +1,10 @@
-// Builds the Three.js scene for one level from pure level data. Everything math-critical
-// (roof edges, planks, hooks, poles with 1 m bands, awnings) is exact procedural geometry.
+// v2 scene builder: a side-view Tel Aviv rooftop course built from the pure Course data.
+// Math-critical pieces (roof edges, hooks, poles with 1 m bands, brackets, canopies) are exact
+// procedural geometry; Tripo models dress the roofs.
 import * as THREE from 'three';
-import { anchorWorld, handOf, markById, type AnchorDef, type Box, type Level } from './levels.ts';
+import { HAND, type Course, type Decision, type Hook } from './levels.ts';
 import type { Sim } from './sim.ts';
-import {
-  bandTexture,
-  clothTexture,
-  facadeGlow,
-  facadeTexture,
-  hazardTexture,
-  labelTexture,
-  rustTexture,
-  signTexture,
-  stripeTexture,
-} from './textures.ts';
+import { bandTexture, clothTexture, facadeGlow, facadeTexture, labelTexture, rustTexture, signTexture, stripeTexture } from './textures.ts';
 
 export interface PropAssets {
   heater?: THREE.Object3D;
@@ -29,22 +20,21 @@ interface Pigeon {
   phase: number;
 }
 
-export interface AnchorView {
-  def: AnchorDef;
+export interface HookView {
+  hook: Hook;
+  decision: Decision;
   pos: THREE.Vector3;
   ring: THREE.Mesh;
   group: THREE.Group;
-  /** frame member midpoints and labels for the converse level */
+  /** bracket frame member midpoints for the side-length labels */
   members?: { mid: THREE.Vector3; text: string }[];
-  hinge?: THREE.Vector3;
 }
 
 export interface World {
   root: THREE.Group;
-  anchors: Map<string, AnchorView>;
-  sun: THREE.DirectionalLight;
+  hooks: Map<string, HookView>;
   update(dt: number, t: number, sim: Sim, playerPos: THREE.Vector3): void;
-  bounceAwning(id: string): void;
+  bounceCanopy(decisionId: string): void;
   scatterPigeons(near: THREE.Vector3): void;
   dispose(): void;
 }
@@ -90,14 +80,11 @@ function buildingMaterial(map: THREE.Texture, night: boolean, roofColor: number,
         '#include <map_fragment>',
         `
         vec2 fuv = abs(vWNrm.x) > 0.5 ? vec2(vWPos.z / 4.0, vWPos.y / 3.0) : vec2(vWPos.x / 4.0, vWPos.y / 3.0);
-        bool isTop = vWNrm.y > 0.5;
-        if (isTop) {
+        if (vWNrm.y > 0.5) {
           vec2 g = abs(fract(vWPos.xz + 0.5) - 0.5) / (fwidth(vWPos.xz) * 1.4);
           float line = 1.0 - min(min(g.x, g.y), 1.0);
-          vec2 g5 = abs(fract(vWPos.xz / 5.0 + 0.5) - 0.5) * 5.0 / (fwidth(vWPos.xz) * 2.2);
-          float line5 = 1.0 - min(min(g5.x, g5.y), 1.0);
           vec3 tile = uRoof * (0.96 + 0.04 * sin(floor(vWPos.x) * 12.9 + floor(vWPos.z) * 78.2));
-          diffuseColor.rgb *= mix(tile, uLine, max(line * 0.6, line5 * 0.85));
+          diffuseColor.rgb *= mix(tile, uLine, line * 0.55);
         } else {
           diffuseColor *= texture2D(map, fuv);
         }
@@ -119,8 +106,8 @@ function skyMaterial(night: boolean, sunDir: THREE.Vector3): THREE.ShaderMateria
     depthWrite: false,
     fog: false,
     uniforms: {
-      uTop: { value: new THREE.Color(night ? 0x0b1430 : 0x3f8f9f) },
-      uMid: { value: new THREE.Color(night ? 0x1d2c5a : 0xf0a46a) },
+      uTop: { value: new THREE.Color(night ? 0x0b1430 : 0x3a8a9e) },
+      uMid: { value: new THREE.Color(night ? 0x1d2c5a : 0xf3a06a) },
       uBot: { value: new THREE.Color(night ? 0x2b3570 : 0xffcf8f) },
       uSun: { value: sunDir.clone().normalize() },
       uSunCol: { value: new THREE.Color(night ? 0xe8eeff : 0xfff1c8) },
@@ -135,18 +122,18 @@ function skyMaterial(night: boolean, sunDir: THREE.Vector3): THREE.ShaderMateria
         vec3 c = mix(uBot, uMid, smoothstep(-0.05, 0.12, h));
         c = mix(c, uTop, smoothstep(0.08, 0.55, h));
         float d = max(dot(vDir, uSun), 0.0);
-        c += uSunCol * (pow(d, 900.0) * 2.5 + pow(d, 24.0) * 0.35 * (1.0 - uNight) + pow(d, 4.0) * 0.12);
+        c += uSunCol * (pow(d, 700.0) * 2.5 + pow(d, 20.0) * 0.35 * (1.0 - uNight) + pow(d, 4.0) * 0.12);
         if (uNight > 0.5) {
           vec2 sp = floor(vDir.xz / (vDir.y + 0.3) * 260.0);
-          float s = step(0.996, hash(sp)) * smoothstep(0.1, 0.4, h);
-          c += vec3(s) * 0.8;
+          c += vec3(step(0.996, hash(sp)) * smoothstep(0.1, 0.4, h)) * 0.8;
         }
         gl_FragColor = vec4(c, 1.0);
       }`,
   });
 }
 
-export function buildWorld(level: Level, assets: PropAssets, quality: { shadows: boolean }): World {
+export function buildWorld(course: Course, assets: PropAssets): World {
+  const level = course.level;
   const night = level.night;
   const root = new THREE.Group();
   const rand = seeded(level.num * 977 + 13);
@@ -156,45 +143,35 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
     return x;
   };
 
-  // ---------- sky, sea, light ----------
-  const sunDir = night ? new THREE.Vector3(0.5, 0.55, -0.6) : new THREE.Vector3(0.9, 0.12, -0.42);
+  // ---------- sky, sea, light (the sun sets behind the city, over the sea) ----------
+  const sunDir = night ? new THREE.Vector3(-0.3, 0.5, -1) : new THREE.Vector3(-0.25, 0.1, -1);
   const sky = new THREE.Mesh(track(new THREE.SphereGeometry(900, 32, 16)), track(skyMaterial(night, sunDir)));
   sky.renderOrder = -10;
   root.add(sky);
-
-  const sea = new THREE.Mesh(
-    track(new THREE.PlaneGeometry(4000, 1400)),
-    track(new THREE.MeshStandardMaterial({ color: night ? 0x18264a : 0x2f8ea0, roughness: 0.25, metalness: 0.35 })),
-  );
+  const midX = (course.roofs[0].x0 + course.roofs[course.roofs.length - 1].x1) / 2;
+  const sea = new THREE.Mesh(track(new THREE.PlaneGeometry(3000, 1200)), track(new THREE.MeshStandardMaterial({ color: night ? 0x18264a : 0x2f8ea0, roughness: 0.2, metalness: 0.4 })));
   sea.rotation.x = -Math.PI / 2;
-  sea.position.set(700 + 160, 0.2, 0);
+  sea.position.set(midX, 0.2, -700);
   root.add(sea);
-  const ground = new THREE.Mesh(
-    track(new THREE.PlaneGeometry(600, 900)),
-    track(new THREE.MeshStandardMaterial({ color: night ? 0x2a2e44 : 0xc9b79c, roughness: 1 })),
-  );
+  const ground = new THREE.Mesh(track(new THREE.PlaneGeometry(1600, 260)), track(new THREE.MeshStandardMaterial({ color: night ? 0x2a2e44 : 0xc9b79c, roughness: 1 })));
   ground.rotation.x = -Math.PI / 2;
-  ground.position.set(0, 0, 0);
+  ground.position.set(midX, 0, -40);
   ground.receiveShadow = true;
   root.add(ground);
 
-  const hemi = new THREE.HemisphereLight(night ? 0x5a6db0 : 0xd6eef2, night ? 0x22223a : 0xffb27a, night ? 0.9 : 1.55);
+  const hemi = new THREE.HemisphereLight(night ? 0x5a6db0 : 0xffe9d2, night ? 0x22223a : 0xd9a27a, night ? 0.9 : 1.5);
   root.add(hemi);
-  const sun = new THREE.DirectionalLight(night ? 0xbcc8ff : 0xffc890, night ? 1.0 : 3.4);
-  sun.position.copy(sunDir).multiplyScalar(60);
-  sun.castShadow = quality.shadows;
+  const sun = new THREE.DirectionalLight(night ? 0xbcc8ff : 0xffbf86, night ? 0.8 : 2.4);
+  sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  const sc = sun.shadow.camera;
-  sc.left = -40;
-  sc.right = 40;
-  sc.top = 40;
-  sc.bottom = -40;
-  sc.near = 1;
-  sc.far = 200;
+  Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 220 });
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.04;
-  root.add(sun);
-  root.add(sun.target);
+  root.add(sun, sun.target);
+  // warm fill from the camera side so the runner's face isn't in silhouette
+  const fill = new THREE.DirectionalLight(night ? 0x8090c0 : 0xfff0dc, night ? 0.5 : 1.1);
+  fill.position.set(10, 30, 60);
+  root.add(fill);
 
   // ---------- materials ----------
   const facades = [0, 1, 2, 3, 4, 5].map((i) => track(facadeTexture(i, night)));
@@ -206,30 +183,26 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
     return track(m);
   });
   const bandTex = track(bandTexture(night));
-  const rust = track(rustTexture());
-  const hazard = track(hazardTexture());
-  const steelMat = track(new THREE.MeshStandardMaterial({ map: rust, roughness: 0.7, metalness: 0.35 }));
-  const hazardMat = track(new THREE.MeshStandardMaterial({ map: hazard, roughness: 0.6 }));
+  const steelMat = track(new THREE.MeshStandardMaterial({ map: track(rustTexture()), roughness: 0.7, metalness: 0.35 }));
   const whiteMat = track(new THREE.MeshStandardMaterial({ color: night ? 0xc4c7dd : 0xfbf6ec, roughness: 0.85 }));
   const darkMetal = track(new THREE.MeshStandardMaterial({ color: 0x3a3f45, roughness: 0.5, metalness: 0.6 }));
-  const hookMat = track(new THREE.MeshStandardMaterial({ color: 0xffb13b, emissive: 0xff8a1a, emissiveIntensity: 1.6, roughness: 0.3, metalness: 0.5 }));
-  const cableMat = track(new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.6 }));
-  const bulbMat = track(new THREE.MeshStandardMaterial({ color: 0xfff1b0, emissive: 0xffd36a, emissiveIntensity: 3 }));
-
+  const hookMat = track(new THREE.MeshStandardMaterial({ color: 0xffb13b, emissive: 0xff7a10, emissiveIntensity: 2.2, roughness: 0.3, metalness: 0.4 }));
+  const usedMat = track(new THREE.MeshStandardMaterial({ color: 0x8a8f94, emissive: 0x111111, roughness: 0.6, metalness: 0.4 }));
+  const cableMat = track(new THREE.MeshStandardMaterial({ color: 0x24282c, roughness: 0.6 }));
+  const bulbMat = track(new THREE.MeshStandardMaterial({ color: 0xfff1b0, emissive: 0xffd36a, emissiveIntensity: 3.5 }));
   const boxGeo = track(new THREE.BoxGeometry(1, 1, 1));
   const cylGeo = track(new THREE.CylinderGeometry(1, 1, 1, 12, 1));
 
-  function boxMesh(mat: THREE.Material, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, shadow = true): THREE.Mesh {
+  function boxMesh(mat: THREE.Material, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, shadow = true, parent: THREE.Object3D = root): THREE.Mesh {
     const m = new THREE.Mesh(boxGeo, mat);
     m.scale.set(x1 - x0, y1 - y0, z1 - z0);
     m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
     m.castShadow = shadow;
     m.receiveShadow = true;
-    root.add(m);
+    parent.add(m);
     return m;
   }
 
-  /** Cylinder between two points. */
   function rod(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material, parent: THREE.Object3D = root): THREE.Mesh {
     const m = new THREE.Mesh(cylGeo, mat);
     const d = new THREE.Vector3().subVectors(b, a);
@@ -241,305 +214,219 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
     return m;
   }
 
-  function topAt(x: number, z: number): number {
+  function groundAt(x: number, z: number): number {
     let t = 0;
-    for (const b of level.boxes) if (b.kind === 'roof' && x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1) t = Math.max(t, b.top);
+    for (const r of course.roofs) if (r.kind === 'roof' && x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1) t = Math.max(t, r.top);
     return t;
   }
 
-  /** Pole with 1 m bands aligned to the hand height of the take-off mark (so you can count). */
-  function bandedPole(x: number, z: number, y0: number, y1: number, handY: number, r = 0.16): THREE.Mesh {
+  const bulbGeo = track(new THREE.SphereGeometry(0.1, 8, 6));
+  const bulbs: THREE.Matrix4[] = [];
+  const bulb = (x: number, y: number, z: number) => bulbs.push(new THREE.Matrix4().makeTranslation(x, y, z));
+
+  /** Pole with 1 m red/white bands aligned to a reference height (the grapple hand), so you can count. */
+  function bandedPole(x: number, z: number, y0: number, y1: number, refY: number, r = 0.17): void {
     const t = bandTex.clone();
     t.needsUpdate = true;
     t.repeat.set(1, (y1 - y0) / 2);
-    t.offset.set(0, (((y0 - handY) / 2) % 1 + 1) % 1);
+    t.offset.set(0, ((((y0 - refY) / 2) % 1) + 1) % 1);
     track(t);
-    const mat = track(new THREE.MeshStandardMaterial({ map: t, roughness: 0.6 }));
-    const m = new THREE.Mesh(cylGeo, mat);
+    const m = new THREE.Mesh(cylGeo, track(new THREE.MeshStandardMaterial({ map: t, roughness: 0.6 })));
     m.scale.set(r, y1 - y0, r);
     m.position.set(x, (y0 + y1) / 2, z);
     m.castShadow = true;
     root.add(m);
-    // yellow collar at hand height = "0"
-    const collar = new THREE.Mesh(cylGeo, hookMat);
-    collar.scale.set(r * 1.25, 0.08, r * 1.25);
-    collar.position.set(x, handY, z);
-    root.add(collar);
-    if (night) {
-      for (let y = Math.ceil(handY - y0) + y0; y <= y1; y += 1) bulb(x + r * 1.3, y, z);
-    }
-    return m;
+    if (night) for (let y = refY + 1; y <= y1; y += 1) bulb(x + r + 0.08, y, z + 0.1);
   }
 
-  const bulbGeo = track(new THREE.SphereGeometry(0.09, 8, 6));
-  const bulbs: THREE.Matrix4[] = [];
-  function bulb(x: number, y: number, z: number): void {
-    bulbs.push(new THREE.Matrix4().makeTranslation(x, y, z));
-  }
-
-  // ---------- course buildings ----------
+  // ---------- buildings ----------
   const balconyGeo = track(new THREE.CylinderGeometry(1.5, 1.5, 0.22, 20, 1, false, 0, Math.PI));
   const railGeo = track(new THREE.CylinderGeometry(1.45, 1.45, 0.9, 20, 1, true, 0, Math.PI));
-  const railMat = track(new THREE.MeshStandardMaterial({ color: night ? 0xaab0cc : 0xffffff, roughness: 0.8, side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
-  const roofBoxes = level.boxes.filter((b) => b.kind === 'roof');
-  for (const b of roofBoxes) {
-    const mat = mats[(b.tint ?? 0) % mats.length];
-    boxMesh(mat, b.x0, b.x1, b.y0, b.top, b.z0, b.z1);
-    addParapet(b);
-    addBalconies(b);
-  }
-
-  function addParapet(b: Box): void {
-    const h = 0.32;
-    const w = 0.22;
-    const gaps = level.boxes.filter((p) => p.kind !== 'roof' && Math.abs(p.top - b.top) < 0.01);
-    const segs: [number, number, number, number][] = [
-      [b.x0, b.x1, b.z0, b.z0 + w],
-      [b.x0, b.x1, b.z1 - w, b.z1],
-      [b.x0, b.x0 + w, b.z0, b.z1],
-      [b.x1 - w, b.x1, b.z0, b.z1],
-    ];
-    for (const [x0, x1, z0, z1] of segs) {
-      // cut where a plank leaves the roof
-      const cut = gaps.find((g) => g.x0 < x1 + 0.3 && g.x1 > x0 - 0.3 && g.z0 < z1 + 0.3 && g.z1 > z0 - 0.3);
-      if (cut && x1 - x0 < 1) {
-        if (cut.z0 > z0) boxMesh(whiteMat, x0, x1, b.top, b.top + h, z0, cut.z0 - 0.3);
-        if (cut.z1 < z1) boxMesh(whiteMat, x0, x1, b.top, b.top + h, cut.z1 + 0.3, z1);
-      } else if (cut && z1 - z0 < 1) {
-        if (cut.x0 > x0) boxMesh(whiteMat, x0, cut.x0 - 0.3, b.top, b.top + h, z0, z1);
-        if (cut.x1 < x1) boxMesh(whiteMat, cut.x1 + 0.3, x1, b.top, b.top + h, z0, z1);
-      } else boxMesh(whiteMat, x0, x1, b.top, b.top + h, z0, z1);
+  const railMat = track(new THREE.MeshStandardMaterial({ color: night ? 0xaab0cc : 0xffffff, roughness: 0.8, side: THREE.DoubleSide }));
+  for (const [i, r] of course.roofs.entries()) {
+    if (r.kind === 'walkway') {
+      boxMesh(steelMat, r.x0, r.x1, r.top - 0.3, r.top, r.z0, r.z1);
+      for (let x = Math.ceil(r.x0); x <= r.x1; x += 2) {
+        for (const z of [r.z0, r.z1]) rod(new THREE.Vector3(x, r.top - 9, z), new THREE.Vector3(x, r.top + 1, z), 0.05, darkMetal);
+      }
+      rod(new THREE.Vector3(r.x0, r.top + 1, r.z0), new THREE.Vector3(r.x1, r.top + 1, r.z0), 0.04, darkMetal);
+      continue;
     }
+    boxMesh(mats[i % mats.length], r.x0, r.x1, 0, r.top, r.z0, r.z1);
+    // back parapet only: the front stays open so the runner's feet are never hidden
+    boxMesh(whiteMat, r.x0, r.x1, r.top, r.top + 0.45, r.z0, r.z0 + 0.25);
+    addBalconies(r.x0, r.x1, r.z1, r.top);
   }
 
-  function addBalconies(b: Box): void {
-    if (b.top < 9) return;
-    const sides: { axis: 'z0' | 'z1'; z: number; rot: number }[] = [
-      { axis: 'z0', z: b.z0, rot: Math.PI / 2 },
-      { axis: 'z1', z: b.z1, rot: -Math.PI / 2 },
-    ];
-    for (const s of sides) {
-      for (let y = b.top - 4.2; y > 3; y -= 3) {
-        for (let x = b.x0 + 3; x < b.x1 - 2.5; x += 7 + Math.floor(rand() * 3)) {
-          if (rand() < 0.35) continue;
-          const slab = new THREE.Mesh(balconyGeo, whiteMat);
-          slab.position.set(x, y, s.z);
-          slab.rotation.y = s.rot;
-          slab.castShadow = true;
-          root.add(slab);
-          const rail = new THREE.Mesh(railGeo, railMat);
-          rail.position.set(x, y + 0.5, s.z);
-          rail.rotation.y = s.rot;
-          root.add(rail);
-        }
+  function addBalconies(x0: number, x1: number, z: number, top: number): void {
+    for (let y = top - 4.5; y > 3; y -= 3) {
+      for (let x = x0 + 2.5; x < x1 - 2.5; x += 6 + Math.floor(rand() * 3)) {
+        if (rand() < 0.4) continue;
+        const slab = new THREE.Mesh(balconyGeo, whiteMat);
+        slab.position.set(x, y, z);
+        slab.rotation.y = -Math.PI / 2;
+        slab.castShadow = true;
+        root.add(slab);
+        const rail = new THREE.Mesh(railGeo, railMat);
+        rail.position.set(x, y + 0.5, z);
+        rail.rotation.y = -Math.PI / 2;
+        root.add(rail);
       }
     }
   }
 
-  // ---------- planks, walkway, marks ----------
-  for (const b of level.boxes) {
-    if (b.kind === 'roof') continue;
-    boxMesh(steelMat, b.x0, b.x1, b.y0, b.top, b.z0, b.z1);
-    // support strut under the plank back to the wall
-    const host = roofBoxes.find((r) => Math.abs(r.top - b.top) < 0.01 && b.x0 <= r.x1 + 0.3 && b.x1 >= r.x0 - 0.3 && b.z0 <= r.z1 + 0.3 && b.z1 >= r.z0 - 0.3);
-    if (host && b.kind === 'plank') {
-      const tipX = b.x1 - 0.3;
-      const wallX = Math.min(b.x1, host.x1);
-      rod(new THREE.Vector3(tipX, b.y0, (b.z0 + b.z1) / 2), new THREE.Vector3(wallX, b.top - 1.8, (b.z0 + b.z1) / 2), 0.06, darkMetal);
-      boxMesh(hazardMat, b.x1 - 0.18, b.x1, b.top, b.top + 0.04, b.z0, b.z1, false);
-    }
-    if (b.kind === 'walkway') {
-      // scaffold rails and uprights
-      for (const z of [b.z0, b.z1]) {
-        rod(new THREE.Vector3(b.x0, b.top + 1.0, z), new THREE.Vector3(b.x1 - 0.3, b.top + 1.0, z), 0.035, darkMetal);
-        for (let x = Math.ceil(b.x0); x <= b.x1; x += 2) rod(new THREE.Vector3(x, b.y0 - 4.2, z), new THREE.Vector3(x, b.top + 1.0, z), 0.04, darkMetal);
-      }
-    }
-  }
-  const markMat = track(new THREE.MeshBasicMaterial({ map: track(labelTexture('', { ring: '#ff8a1a' })), transparent: true, depthWrite: false }));
-  const markGeo = track(new THREE.PlaneGeometry(0.95, 0.95));
-  const markViews = new Map<string, THREE.Mesh>();
-  for (const m of level.marks) {
-    let mat: THREE.Material = markMat;
-    if (m.label) {
-      mat = track(new THREE.MeshBasicMaterial({ map: track(labelTexture(m.label, { ring: '#ff8a1a', fg: '#fff3dc' })), transparent: true, depthWrite: false }));
-    }
-    const mesh = new THREE.Mesh(markGeo, mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(m.x, m.top + 0.02, m.z);
-    root.add(mesh);
-    markViews.set(m.id, mesh);
-  }
-
-  // ---------- awnings ----------
+  // ---------- canopies (the trampoline awnings that catch a wrong line) ----------
   const stripes = track(stripeTexture());
-  stripes.repeat.set(3, 1);
+  stripes.repeat.set(2, 1);
   const awningMat = track(new THREE.MeshStandardMaterial({ map: stripes, roughness: 0.85, side: THREE.DoubleSide }));
-  const awningViews = new Map<string, { g: THREE.Group; wobble: number }>();
-  for (const w of level.awnings) {
+  const canopyViews = new Map<string, { g: THREE.Group; wobble: number }>();
+  for (const d of course.decisions) {
+    const c = d.canopy;
     const g = new THREE.Group();
-    g.position.set(w.x, w.top, w.z);
-    g.rotation.y = -Math.atan2(w.dir.z, w.dir.x);
-    const canvasGeo = track(new THREE.PlaneGeometry(w.halfLen * 2, w.halfWide * 2, 6, 2));
-    const cloth = new THREE.Mesh(canvasGeo, awningMat);
+    const w = c.x1 - c.x0;
+    g.position.set((c.x0 + c.x1) / 2, c.top, c.z);
+    const cloth = new THREE.Mesh(track(new THREE.PlaneGeometry(w, 4.2, 6, 2)), awningMat);
     cloth.rotation.x = -Math.PI / 2;
-    cloth.rotation.y = 0.12; // slopes down away from the wall
+    cloth.rotation.y = -0.08;
     cloth.castShadow = true;
-    cloth.receiveShadow = true;
     g.add(cloth);
-    // scalloped valance at the outer edge
-    const val = new THREE.Mesh(track(new THREE.PlaneGeometry(w.halfWide * 2, 0.45)), awningMat);
-    val.position.set(w.halfLen, -0.42, 0);
-    val.rotation.y = Math.PI / 2;
+    const val = new THREE.Mesh(track(new THREE.PlaneGeometry(w, 0.45)), awningMat);
+    val.position.set(0, -0.35, 2.1);
     g.add(val);
-    for (const s of [-1, 1]) {
-      rod(new THREE.Vector3(w.halfLen, -0.2, s * w.halfWide), new THREE.Vector3(-w.halfLen, -1.6, s * w.halfWide), 0.04, darkMetal, g);
-    }
     root.add(g);
-    awningViews.set(w.id, { g, wobble: 0 });
+    // two poles down to whatever is below
+    for (const sx of [c.x0 + 0.2, c.x1 - 0.2]) {
+      const base = groundAt(sx, c.z + 1.8);
+      if (c.top - base > 0.5) rod(new THREE.Vector3(sx, base, c.z + 1.8), new THREE.Vector3(sx, c.top, c.z + 1.8), 0.05, darkMetal);
+    }
+    canopyViews.set(d.id, { g, wobble: 0 });
   }
 
-  // ---------- anchors ----------
-  const anchors = new Map<string, AnchorView>();
-  const ringGeo = track(new THREE.TorusGeometry(0.3, 0.075, 10, 24));
-  const hookGeo = track(new THREE.TorusGeometry(0.17, 0.05, 8, 16, Math.PI * 1.3));
+  // ---------- hooks ----------
+  const hooks = new Map<string, HookView>();
+  const ringGeo = track(new THREE.TorusGeometry(0.32, 0.085, 10, 26));
+  const hookGeo = track(new THREE.TorusGeometry(0.19, 0.06, 8, 16, Math.PI * 1.3));
   const signWords = ['פלאפל', 'גלידה', 'מיץ טבעי', 'ספרים', 'בורקס'];
   let signIdx = 0;
-  for (const a of level.anchors) {
-    const P = anchorWorld(level, a);
-    const pos = new THREE.Vector3(P.x, P.y, P.z);
-    const hand = handOf(markById(level, a.mark));
-    const group = new THREE.Group();
-    root.add(group);
-    const ring = new THREE.Mesh(ringGeo, hookMat);
-    ring.position.copy(pos);
-    group.add(ring);
-    const hook = new THREE.Mesh(hookGeo, hookMat);
-    hook.position.copy(pos).add(new THREE.Vector3(0, -0.42, 0));
-    hook.rotation.z = Math.PI * 0.85;
-    group.add(hook);
-    const view: AnchorView = { def: a, pos, ring, group };
-
-    if (a.kind === 'swing') {
-      // two banded poles 7 m to each side of the swing plane, cable sagging to the hook
-      const perp = new THREE.Vector3(-a.dir.z, 0, a.dir.x);
-      const span = 7;
-      const tops: THREE.Vector3[] = [];
-      for (const s of [-1, 1]) {
-        const x = P.x + perp.x * span * s;
-        const z = P.z + perp.z * span * s;
-        const base = topAt(x, z);
-        const top = P.y + 2.2;
-        bandedPole(x, z, base, top, hand.y);
-        tops.push(new THREE.Vector3(x, top, z));
+  for (const d of course.decisions) {
+    const refY = d.P.y;
+    // cables: one per distinct hook depth, strung between two banded poles behind the swing plane
+    const byZ = new Map<number, Hook[]>();
+    for (const hk of d.hooks) if (hk.kind === 'swing') byZ.set(hk.pos.z, [...(byZ.get(hk.pos.z) ?? []), hk]);
+    for (const [hz, list] of byZ) {
+      const cz = hz - 1.4;
+      const xs = list.map((hk) => hk.pos.x);
+      const x0 = Math.min(...xs) - 2.5;
+      const x1 = Math.max(...xs) + 2.5;
+      const cy = Math.max(...list.map((hk) => hk.pos.y)) + 2.4;
+      for (const px of [x0, x1]) bandedPole(px, cz, groundAt(px, cz), cy + 0.4, refY);
+      rod(new THREE.Vector3(x0, cy, cz), new THREE.Vector3(x1, cy, cz), 0.035, cableMat);
+      for (const hk of list) {
+        rod(new THREE.Vector3(hk.pos.x, cy, cz), new THREE.Vector3(hk.pos.x, hk.pos.y + 0.45, hk.pos.z), 0.03, cableMat);
+        if (night) for (let y = refY + 1; y < hk.pos.y - 0.2; y += 1) bulb(hk.pos.x, y, hk.pos.z - 0.15);
       }
-      const hang = pos.clone().add(new THREE.Vector3(0, 1.2, 0));
-      rod(tops[0], hang, 0.03, cableMat, group);
-      rod(hang, tops[1], 0.03, cableMat, group);
-      rod(hang, pos.clone().add(new THREE.Vector3(0, 0.3, 0)), 0.025, cableMat, group);
-      if (night) {
-        for (const t of tops) {
-          const n = Math.floor(t.distanceTo(hang));
-          for (let i = 1; i < n; i++) {
-            const q = t.clone().lerp(hang, i / n);
-            bulb(q.x, q.y - 0.12, q.z);
-          }
-        }
+      if (night) for (let x = Math.ceil(x0); x <= x1; x += 1) bulb(x, cy - 0.15, cz);
+    }
+    if (night && d.kind === 'hooks') {
+      // a light string at hand height from the decision point: one bulb per metre
+      const far = Math.max(...d.hooks.map((hk) => hk.pos.x));
+      for (let k = 1; d.P.x + k <= far + 0.01; k++) bulb(d.P.x + k, refY, d.P.z - 0.2);
+      rod(new THREE.Vector3(d.P.x, refY + 0.08, d.P.z - 0.2), new THREE.Vector3(far, refY + 0.08, d.P.z - 0.2), 0.012, cableMat);
+    }
+    for (const hk of d.hooks) {
+      const pos = new THREE.Vector3(hk.pos.x, hk.pos.y, hk.pos.z);
+      const group = new THREE.Group();
+      root.add(group);
+      const ring = new THREE.Mesh(ringGeo, hookMat);
+      ring.position.copy(pos);
+      group.add(ring);
+      const hookMesh = new THREE.Mesh(hookGeo, hookMat);
+      hookMesh.position.copy(pos).add(new THREE.Vector3(0, -0.45, 0));
+      hookMesh.rotation.z = Math.PI * 0.85;
+      group.add(hookMesh);
+      const view: HookView = { hook: hk, decision: d, pos, ring, group };
+      if (hk.kind === 'pull') {
+        const base = groundAt(hk.pos.x, hk.pos.z);
+        bandedPole(hk.pos.x, hk.pos.z - 0.3, base, hk.pos.y - 0.3, refY, 0.13);
+      } else if (hk.kind === 'bracket' && hk.spec.frame) {
+        // frame drawn at a fixed size (beam 4.5 m) with its true angles: only 3 lengths that satisfy
+        // p² + q² = r² close into a right angle
+        const { post, beam, brace } = hk.spec.frame;
+        const s = 4.5 / beam;
+        const dy = (brace * brace - post * post - beam * beam) / (2 * post);
+        const dx = Math.sqrt(Math.max(0, beam * beam - dy * dy));
+        const fz = hk.pos.z - 1.6;
+        const T = new THREE.Vector3(hk.pos.x, hk.pos.y + 0.6, fz);
+        const Pt = new THREE.Vector3(T.x + dx * s, T.y - dy * s, fz);
+        const Qt = new THREE.Vector3(Pt.x, Pt.y - post * s, fz);
+        const bracket = new THREE.Group();
+        bracket.position.copy(Pt);
+        group.add(bracket);
+        const loc = (p: THREE.Vector3) => p.clone().sub(Pt);
+        const ok = dy === 0;
+        const beamMat = track(new THREE.MeshStandardMaterial({ color: ok ? 0x2f6f6a : 0x8a4a32, roughness: 0.55, metalness: 0.4 }));
+        rod(loc(Pt), loc(T), 0.13, beamMat, bracket);
+        rod(loc(Pt), loc(Qt), 0.13, beamMat, bracket);
+        rod(loc(Qt), loc(T), 0.1, beamMat, bracket);
+        rod(loc(T), loc(new THREE.Vector3(hk.pos.x, T.y, hk.pos.z)), 0.06, darkMetal, bracket);
+        // the support pole the bracket is bolted to
+        const base = groundAt(Pt.x, fz);
+        rod(new THREE.Vector3(Pt.x, base, fz - 0.25), new THREE.Vector3(Pt.x, Pt.y + 0.6, fz - 0.25), 0.2, darkMetal);
+        const sign = new THREE.Mesh(
+          track(new THREE.PlaneGeometry(3.6, 1.6)),
+          track(new THREE.MeshStandardMaterial({ map: track(signTexture(signWords[signIdx++ % signWords.length], ok ? '#1f6f68' : '#b2462e', '#fff3dc')), side: THREE.DoubleSide, roughness: 0.7 })),
+        );
+        sign.position.copy(loc(new THREE.Vector3((T.x + Pt.x) / 2, Math.min(T.y, Pt.y) - 1.5, fz - 0.05)));
+        bracket.add(sign);
+        group.remove(ring, hookMesh);
+        ring.position.copy(loc(pos));
+        hookMesh.position.copy(loc(pos)).add(new THREE.Vector3(0, -0.55, 0));
+        bracket.add(ring, hookMesh);
+        view.group = bracket;
+        view.members = [
+          { mid: Pt.clone().lerp(Qt, 0.5), text: String(post) },
+          { mid: Pt.clone().lerp(T, 0.5), text: String(beam) },
+          { mid: Qt.clone().lerp(T, 0.5), text: String(brace) },
+        ];
       }
-    } else if (a.kind === 'pull') {
-      const base = topAt(P.x + a.dir.x * 0.5, P.z + a.dir.z * 0.5);
-      bandedPole(P.x, P.z, base, P.y - 0.25, hand.y, 0.12);
-    } else if (a.kind === 'bracket' && a.frame) {
-      const { post, beam, brace } = a.frame;
-      // honest geometry: P (top of post) and Q (bottom) on the wall, T is the hook.
-      // dy = (brace² − post² − beam²) / (2·post) is 0 exactly for a right triangle.
-      const dy = (brace * brace - post * post - beam * beam) / (2 * post);
-      const dz = Math.sqrt(beam * beam - dy * dy);
-      const Pw = new THREE.Vector3(P.x, P.y - dy, P.z + dz);
-      const Qw = new THREE.Vector3(P.x, P.y - dy - post, P.z + dz);
-      const bracket = new THREE.Group();
-      bracket.position.copy(Pw);
-      group.add(bracket);
-      const loc = (v: THREE.Vector3) => v.clone().sub(Pw);
-      const beamMat = track(new THREE.MeshStandardMaterial({ color: dy === 0 ? 0x2f6f6a : 0x6b4a3a, roughness: 0.6, metalness: 0.4 }));
-      rod(loc(Pw), loc(pos), 0.11, beamMat, bracket);
-      rod(loc(Pw), loc(Qw), 0.11, beamMat, bracket);
-      rod(loc(Qw), loc(pos), 0.09, beamMat, bracket);
-      // sign board hanging under the beam
-      const sign = new THREE.Mesh(
-        track(new THREE.PlaneGeometry(4.2, 2.1)),
-        track(new THREE.MeshStandardMaterial({ map: track(signTexture(signWords[signIdx++ % signWords.length], dy === 0 ? '#1f6f68' : '#b2462e', '#fff3dc')), side: THREE.DoubleSide, roughness: 0.7 })),
-      );
-      sign.position.copy(loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 1.7, (P.z + Pw.z) / 2)));
-      sign.rotation.y = -Math.PI / 2;
-      bracket.add(sign);
-      rod(loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 0.2, (P.z + Pw.z) / 2 - 1.6)), loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 0.65, (P.z + Pw.z) / 2 - 1.6)), 0.02, cableMat, bracket);
-      rod(loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 0.2, (P.z + Pw.z) / 2 + 1.6)), loc(new THREE.Vector3(P.x, (P.y + Pw.y) / 2 - 0.65, (P.z + Pw.z) / 2 + 1.6)), 0.02, cableMat, bracket);
-      // move the hook with the bracket
-      group.remove(ring, hook);
-      ring.position.copy(loc(pos));
-      hook.position.copy(loc(pos)).add(new THREE.Vector3(0, -0.42, 0));
-      bracket.add(ring, hook);
-      // wall plate bridging any gap to the facade
-      const wall = level.boxes.find((b) => b.id.startsWith('WALL') && P.x >= b.x0 && P.x <= b.x1);
-      if (wall && wall.z0 > Pw.z + 0.02) boxMesh(darkMetal, P.x - 0.2, P.x + 0.2, Qw.y - 0.2, Pw.y + 0.2, Pw.z, wall.z0, false);
-      view.group = bracket;
-      view.hinge = Pw.clone();
-      view.members = [
-        { mid: Pw.clone().lerp(Qw, 0.5), text: String(post) },
-        { mid: Pw.clone().lerp(pos, 0.5), text: String(beam) },
-        { mid: Qw.clone().lerp(pos, 0.5), text: String(brace) },
-      ];
+      hooks.set(hk.id, view);
     }
-    anchors.set(a.id, view);
-  }
-
-  // night: string of bulbs every metre across each gap at hand height
-  if (night) {
-    for (const m of level.marks) {
-      const h = handOf(m);
-      for (let i = 1; i <= 14; i++) bulb(h.x + m.dir.x * i, h.y, h.z + m.dir.z * i + 0.6);
-      rod(new THREE.Vector3(h.x, h.y + 0.08, h.z + 0.6), new THREE.Vector3(h.x + m.dir.x * 14, h.y + 0.08, h.z + 0.6), 0.012, cableMat);
+    // jump strip: numbered tiles 10..1, a plumb line from the hook down to "0"
+    if (d.kind === 'strip' && d.strip) {
+      const s = d.strip;
+      for (let n = 1; n <= 10; n++) {
+        const tile = new THREE.Mesh(
+          track(new THREE.PlaneGeometry(0.92, 1.4)),
+          track(new THREE.MeshBasicMaterial({ map: track(labelTexture(String(n), { bg: n % 2 ? '#d9783b' : '#c96a30', fg: '#fff6e6', w: 128, h: 196 })) })),
+        );
+        tile.rotation.x = -Math.PI / 2;
+        tile.position.set(s.foot - n, s.top + 0.02, d.P.z);
+        root.add(tile);
+      }
+      const hk = d.hooks[0];
+      const jibBase = s.foot + 2.5;
+      bandedPole(jibBase, d.P.z - 1.2, groundAt(jibBase, d.P.z - 1.2), hk.pos.y + 2.4, s.top + HAND);
+      rod(new THREE.Vector3(jibBase, hk.pos.y + 2.2, d.P.z - 1.2), new THREE.Vector3(hk.pos.x, hk.pos.y + 2.2, d.P.z - 1.2), 0.06, darkMetal);
+      rod(new THREE.Vector3(hk.pos.x, hk.pos.y + 2.2, d.P.z - 1.2), new THREE.Vector3(hk.pos.x, hk.pos.y + 0.45, hk.pos.z), 0.03, cableMat);
+      const plumbMat = track(new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
+      for (let y = s.top + 0.2; y < hk.pos.y - 0.8; y += 0.6) rod(new THREE.Vector3(hk.pos.x, y, d.P.z), new THREE.Vector3(hk.pos.x, y + 0.3, d.P.z), 0.02, plumbMat);
+      const zero = new THREE.Mesh(track(new THREE.CircleGeometry(0.4, 20)), track(new THREE.MeshBasicMaterial({ map: track(labelTexture('0', { bg: '#1f4f52', fg: '#fff6e6' })) })));
+      zero.position.set(hk.pos.x, s.top + 0.4, d.P.z + 0.3);
+      root.add(zero);
     }
   }
 
-  // ---------- courtyard grid for the space level ----------
-  if (level.courtyard) {
-    const c = level.courtyard;
-    const floor = boxMesh(mats[2], c.x0 - 6, c.x1 + 16, -0.5, 0.05, c.z0 - 6, c.z1 + 16, false);
-    floor.receiveShadow = true;
-    const axisMat = track(new THREE.MeshBasicMaterial({ color: 0xff8a1a }));
-    boxMesh(axisMat, 0, 14, 0.06, 0.1, -0.06, 0.06, false);
-    boxMesh(axisMat, -0.06, 0.06, 0.06, 0.1, 0, 14, false);
-    const lx = new THREE.Mesh(track(new THREE.PlaneGeometry(1.2, 1.2)), track(new THREE.MeshBasicMaterial({ map: track(labelTexture('x', { fg: '#ff8a1a' })), transparent: true })));
-    lx.rotation.x = -Math.PI / 2;
-    lx.position.set(14.8, 0.12, 0);
-    root.add(lx);
-    const lz = lx.clone();
-    (lz as THREE.Mesh).material = track(new THREE.MeshBasicMaterial({ map: track(labelTexture('z', { fg: '#ff8a1a' })), transparent: true }));
-    lz.position.set(0, 0.12, 14.8);
-    root.add(lz);
-  }
-
-  // ---------- finish ----------
-  const fb = level.boxes.find((b) => b.id === level.finish.box)!;
-  const fx = level.finish.x;
-  const fz = level.finish.z;
-  const finishRing = new THREE.Mesh(track(new THREE.RingGeometry(1.6, 2.2, 40)), track(new THREE.MeshBasicMaterial({ color: 0xff9a2a, transparent: true, opacity: 0.85, side: THREE.DoubleSide })));
+  // ---------- finish arch ----------
+  const f = course.finish;
+  const finishRing = new THREE.Mesh(track(new THREE.RingGeometry(1.4, 2, 40)), track(new THREE.MeshBasicMaterial({ color: 0xffb13b, transparent: true, opacity: 0.85, side: THREE.DoubleSide })));
   finishRing.rotation.x = -Math.PI / 2;
-  finishRing.position.set(fx, fb.top + 0.03, fz);
+  finishRing.position.set(f.x, f.y + 0.03, f.z);
   root.add(finishRing);
-  const ring2 = finishRing.clone();
-  ring2.scale.setScalar(0.62);
-  ring2.position.y += 0.01;
-  root.add(ring2);
-  const postMat = (() => {
-    const t = bandTex.clone();
-    t.needsUpdate = true;
-    t.repeat.set(1, 2.2);
-    track(t);
-    return track(new THREE.MeshStandardMaterial({ map: t, roughness: 0.6 }));
-  })();
+  const postTex = bandTex.clone();
+  postTex.needsUpdate = true;
+  postTex.repeat.set(1, 2.2);
+  track(postTex);
+  const postMat = track(new THREE.MeshStandardMaterial({ map: postTex, roughness: 0.6 }));
   const checker = (() => {
     const c = document.createElement('canvas');
     c.width = c.height = 64;
@@ -552,69 +439,53 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
     t.colorSpace = THREE.SRGBColorSpace;
     return track(t);
   })();
-  const flagMat = track(new THREE.MeshStandardMaterial({ map: checker, side: THREE.DoubleSide, roughness: 0.8 }));
+  const flagMat = track(new THREE.MeshStandardMaterial({ map: checker, side: THREE.DoubleSide }));
   const flags: THREE.Mesh[] = [];
-  for (const s of [-1, 1]) {
+  for (const sx of [-2.6, 2.6]) {
     const post = new THREE.Mesh(cylGeo, postMat);
     post.scale.set(0.16, 4.4, 0.16);
-    post.position.set(fx, fb.top + 2.2, fz + s * 2.6);
+    post.position.set(f.x + sx, f.y + 2.2, f.z - 0.5);
     post.castShadow = true;
     root.add(post);
-    const flag = new THREE.Mesh(track(new THREE.PlaneGeometry(1.2, 0.8, 4, 1)), flagMat);
-    flag.position.set(fx, fb.top + 4.75, fz + s * 3.25);
-    flag.rotation.y = Math.PI / 2;
+    const flag = new THREE.Mesh(track(new THREE.PlaneGeometry(1.1, 0.75)), flagMat);
+    flag.position.set(f.x + sx * 1.25, f.y + 4.7, f.z - 0.5);
     root.add(flag);
     flags.push(flag);
   }
   const banner = new THREE.Mesh(
-    track(new THREE.PlaneGeometry(5, 1.25)),
+    track(new THREE.PlaneGeometry(5.2, 1.3)),
     track(new THREE.MeshStandardMaterial({ map: track(signTexture('סיום', '#c8382a', '#fff8ea')), side: THREE.DoubleSide, emissive: 0x551100, emissiveIntensity: night ? 1.5 : 0.25 })),
   );
-  banner.position.set(fx, fb.top + 3.7, fz);
-  banner.rotation.y = -Math.PI / 2;
+  banner.position.set(f.x, f.y + 3.75, f.z - 0.5);
   root.add(banner);
 
-  // ---------- background city ----------
-  const bgCount = 240;
+  // ---------- background city behind the course ----------
+  const bgCount = 260;
   const bg = new THREE.InstancedMesh(boxGeo, mats[1], bgCount);
   const mtx = new THREE.Matrix4();
   const col = new THREE.Color();
+  const minX = course.roofs[0].x0 - 60;
+  const maxX = course.roofs[course.roofs.length - 1].x1 + 60;
+  const zFront = Math.min(...course.roofs.map((r) => r.z0)) - 6;
   let placed = 0;
-  const minX = Math.min(...level.boxes.map((b) => b.x0)) - 70;
-  const maxX = Math.max(...level.boxes.map((b) => b.x1)) + 60;
-  const minZ = Math.min(...level.boxes.map((b) => b.z0)) - 80;
-  const maxZ = Math.max(...level.boxes.map((b) => b.z1)) + 80;
-  const course = level.boxes;
-  const anchorPts = [...anchors.values()].map((v) => v.pos);
-  for (let tries = 0; tries < 3000 && placed < bgCount; tries++) {
-    const w = 6 + rand() * 10;
-    const d = 6 + rand() * 10;
+  for (let i = 0; i < 4000 && placed < bgCount; i++) {
+    const w = 7 + rand() * 9;
+    const dz = 7 + rand() * 9;
     const x = minX + rand() * (maxX - minX);
-    const z = minZ + rand() * (maxZ - minZ);
-    const clear = course.every((b) => x + w / 2 < b.x0 - 9 || x - w / 2 > b.x1 + 9 || z + d / 2 < b.z0 - 9 || z - d / 2 > b.z1 + 9);
-    const clearHooks = anchorPts.every((p) => Math.hypot(p.x - x, p.z - z) > 20);
-    if (!clear || !clearHooks) continue;
-    const distToCourse = Math.min(...course.map((b) => Math.hypot(Math.max(b.x0 - x, 0, x - b.x1), Math.max(b.z0 - z, 0, z - b.z1))));
-    const h = 4 + rand() * (distToCourse < 30 ? 12 : 20);
-    mtx.compose(new THREE.Vector3(x, h / 2, z), new THREE.Quaternion(), new THREE.Vector3(w, h, d));
+    const z = zFront - 6 - rand() * 90;
+    const near = zFront - z < 30;
+    const hgt = near ? 6 + rand() * 22 : 8 + rand() * 30;
+    mtx.compose(new THREE.Vector3(x, hgt / 2, z), new THREE.Quaternion(), new THREE.Vector3(w, hgt, dz));
     bg.setMatrixAt(placed, mtx);
     col.setHex(night ? 0x9da2c4 : TINTS[Math.floor(rand() * TINTS.length)]);
     bg.setColorAt(placed, col);
     placed++;
   }
   bg.count = placed;
-  bg.castShadow = false;
   bg.receiveShadow = true;
   root.add(bg);
 
-  // ---------- props (Tripo models) ----------
-  const laundry: THREE.Mesh[] = [];
-  const keepClear = (x: number, z: number): boolean => {
-    for (const m of level.marks) if (Math.hypot(m.x - x, m.z - z) < 5) return false;
-    if (Math.hypot(level.finish.x - x, level.finish.z - z) < 5) return false;
-    if (Math.hypot(level.start.x - x, level.start.z - z) < 3) return false;
-    return true;
-  };
+  // ---------- props (Tripo) ----------
   function placeProp(src: THREE.Object3D | undefined, x: number, y: number, z: number, rotY: number, s = 1): THREE.Object3D | null {
     if (!src) return null;
     const o = src.clone(true);
@@ -624,61 +495,49 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
     root.add(o);
     return o;
   }
-  for (const b of roofBoxes) {
-    if (b.id.startsWith('WALL')) continue;
-    const area = (b.x1 - b.x0) * (b.z1 - b.z0);
-    const n = Math.min(4, Math.floor(area / 60));
-    for (let i = 0; i < n; i++) {
-      // hug the side parapets so the running lane stays open
-      const side = rand() < 0.5 ? b.z0 + 1.6 : b.z1 - 1.6;
-      const x = b.x0 + 2 + rand() * (b.x1 - b.x0 - 4);
-      if (!keepClear(x, side)) continue;
-      if (rand() < 0.6) placeProp(assets.heater, x, b.top, side, side < (b.z0 + b.z1) / 2 ? Math.PI : 0);
-      else placeProp(assets.tank, x, b.top, side, rand() * Math.PI * 2);
-    }
-    // laundry line on bigger roofs
-    if (area > 140 && rand() < 0.7) addLaundry(b);
-  }
-  // background roofs get a few heaters too (skyline silhouette)
-  for (let i = 0; i < Math.min(placed, 40); i++) {
-    bg.getMatrixAt(i, mtx);
-    const p = new THREE.Vector3();
-    const q = new THREE.Quaternion();
-    const s = new THREE.Vector3();
-    mtx.decompose(p, q, s);
-    placeProp(i % 3 ? assets.heater : assets.tank, p.x, s.y, p.z, rand() * 6.28, 1);
-  }
-
-  function addLaundry(b: Box): void {
-    const z = b.z1 - 3;
-    const x0 = b.x0 + 2;
-    const x1 = Math.min(b.x1 - 2, x0 + 7);
-    if (!keepClear((x0 + x1) / 2, z)) return;
-    rod(new THREE.Vector3(x0, b.top, z), new THREE.Vector3(x0, b.top + 2, z), 0.04, darkMetal);
-    rod(new THREE.Vector3(x1, b.top, z), new THREE.Vector3(x1, b.top + 2, z), 0.04, darkMetal);
-    rod(new THREE.Vector3(x0, b.top + 1.95, z), new THREE.Vector3(x1, b.top + 1.95, z), 0.01, cableMat);
-    const colors = ['#e2574c', '#3f8fd2', '#f2c14e', '#ffffff', '#58b368', '#e98bb4'];
-    for (let x = x0 + 0.8; x < x1 - 0.5; x += 1.1) {
-      const cloth = new THREE.Mesh(track(new THREE.PlaneGeometry(0.8, 0.9 + rand() * 0.4)), track(new THREE.MeshStandardMaterial({ map: track(clothTexture(colors[Math.floor(rand() * colors.length)])), side: THREE.DoubleSide })));
-      cloth.position.set(x, b.top + 1.45, z);
-      cloth.castShadow = true;
-      root.add(cloth);
-      laundry.push(cloth);
-    }
-  }
-
+  const busyX = (x: number) => course.decisions.some((d) => d.edge !== null && Math.abs(x - d.edge) < 4) || Math.abs(x - f.x) < 5;
+  const laundry: THREE.Mesh[] = [];
   const pigeons: Pigeon[] = [];
-  if (assets.pigeon) {
-    for (const b of roofBoxes) {
-      if (b.id.startsWith('WALL')) continue;
+  for (const r of course.roofs) {
+    if (r.kind !== 'roof') continue;
+    for (let x = r.x0 + 2.5; x < r.x1 - 2; x += 5 + rand() * 4) {
+      if (busyX(x)) continue;
+      const zBack = r.z0 + 1.6;
+      if (rand() < 0.55) placeProp(assets.heater, x, r.top, zBack, 0);
+      else placeProp(assets.tank, x, r.top, zBack - 0.2, rand() * 6.28, 0.9);
+    }
+    if (r.x1 - r.x0 > 16 && rand() < 0.7) {
+      const lx0 = r.x0 + 3;
+      const lx1 = Math.min(r.x1 - 3, lx0 + 6);
+      if (!busyX((lx0 + lx1) / 2)) {
+        const lz = r.z0 + 3.2;
+        rod(new THREE.Vector3(lx0, r.top, lz), new THREE.Vector3(lx0, r.top + 2, lz), 0.04, darkMetal);
+        rod(new THREE.Vector3(lx1, r.top, lz), new THREE.Vector3(lx1, r.top + 2, lz), 0.04, darkMetal);
+        rod(new THREE.Vector3(lx0, r.top + 1.95, lz), new THREE.Vector3(lx1, r.top + 1.95, lz), 0.01, cableMat);
+        const colors = ['#e2574c', '#3f8fd2', '#f2c14e', '#ffffff', '#58b368', '#e98bb4'];
+        for (let x = lx0 + 0.8; x < lx1 - 0.4; x += 1.1) {
+          const cloth = new THREE.Mesh(track(new THREE.PlaneGeometry(0.8, 0.9 + rand() * 0.4)), track(new THREE.MeshStandardMaterial({ map: track(clothTexture(colors[Math.floor(rand() * colors.length)])), side: THREE.DoubleSide })));
+          cloth.position.set(x, r.top + 1.45, lz);
+          root.add(cloth);
+          laundry.push(cloth);
+        }
+      }
+    }
+    if (assets.pigeon) {
       const n = 2 + Math.floor(rand() * 3);
       for (let i = 0; i < n; i++) {
-        const x = b.x0 + 1 + rand() * (b.x1 - b.x0 - 2);
-        const z = rand() < 0.5 ? b.z0 + 0.12 : b.z1 - 0.12;
-        const o = placeProp(assets.pigeon, x, b.top + 0.32, z, rand() * 6.28, 0.9 + rand() * 0.3);
+        const x = r.x0 + 1 + rand() * (r.x1 - r.x0 - 2);
+        const o = placeProp(assets.pigeon, x, r.top + 0.45, r.z0 + 0.15, Math.PI / 2 + (rand() - 0.5), 0.9 + rand() * 0.3);
         if (o) pigeons.push({ obj: o, home: o.position.clone(), vel: new THREE.Vector3(), flying: 0, phase: rand() * 10 });
       }
     }
+  }
+  for (let i = 0; i < Math.min(placed, 50); i++) {
+    bg.getMatrixAt(i, mtx);
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3();
+    mtx.decompose(p, new THREE.Quaternion(), s);
+    placeProp(i % 3 ? assets.heater : assets.tank, p.x, s.y, p.z, rand() * 6.28);
   }
 
   if (bulbs.length) {
@@ -687,41 +546,35 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
     root.add(inst);
   }
 
-  const brokenState = new Map<string, number>();
+  const broken = new Map<string, number>();
 
   function update(dt: number, t: number, sim: Sim, playerPos: THREE.Vector3): void {
     sun.target.position.copy(playerPos);
-    sun.position.copy(playerPos).addScaledVector(sunDir, 60);
-    // active mark pulse
-    const active = sim.activeMark();
-    for (const [id, mesh] of markViews) {
-      const on = active?.id === id;
-      const s = on ? 1 + Math.sin(t * 6) * 0.08 : 0.85;
-      mesh.scale.set(s, s, s);
+    sun.position.set(playerPos.x - 18, playerPos.y + 55, playerPos.z - 60);
+    const used = new Set(sim.tried);
+    for (const v of hooks.values()) {
+      v.ring.rotation.y += dt * 1.6;
+      const active = sim.state === 'decide' && sim.decision === v.decision;
+      const s = active ? 1.25 + Math.sin(t * 5) * 0.08 : 1;
+      v.ring.scale.setScalar(s);
+      const isUsed = used.has(v.hook.id) && sim.decision === v.decision;
+      (v.ring.material as THREE.Material) = isUsed ? usedMat : hookMat;
+      if (v.hook.kind === 'bracket') {
+        let k = broken.get(v.hook.id) ?? 0;
+        k = sim.brokenHook === v.hook.id ? Math.min(1, k + dt * 2.2) : Math.max(0, k - dt * 2.5);
+        broken.set(v.hook.id, k);
+        v.group.rotation.z = -k * k * 1.2;
+      }
     }
-    for (const v of anchors.values()) {
-      v.ring.rotation.y += dt * 1.4;
-    }
-    // brackets: a crooked one swings down when it breaks, then is bolted back for the retry
-    for (const v of anchors.values()) {
-      if (!v.hinge) continue;
-      const broken = sim.brokenAnchor === v.def.id;
-      let k = brokenState.get(v.def.id) ?? 0;
-      k = broken ? Math.min(1, k + dt * 2.2) : Math.max(0, k - dt * 3);
-      brokenState.set(v.def.id, k);
-      v.group.rotation.x = -k * k * 1.1;
-      v.group.rotation.z = k * 0.15;
-    }
-    for (const [, a] of awningViews) {
-      if (a.wobble > 0) {
-        a.wobble = Math.max(0, a.wobble - dt * 1.6);
-        const w = Math.sin(t * 28) * a.wobble;
-        a.g.scale.set(1, 1 - w * 0.25, 1 + w * 0.04);
+    for (const c of canopyViews.values()) {
+      if (c.wobble > 0) {
+        c.wobble = Math.max(0, c.wobble - dt * 1.6);
+        const w = Math.sin(t * 28) * c.wobble;
+        c.g.scale.set(1, 1 - w * 0.3, 1);
       }
     }
     for (const [i, c] of laundry.entries()) c.rotation.y = Math.sin(t * 1.7 + i) * 0.25;
-    for (const [i, f] of flags.entries()) f.rotation.x = Math.sin(t * 3 + i) * 0.2;
-    finishRing.scale.setScalar(1 + Math.sin(t * 3) * 0.04);
+    for (const [i, fl] of flags.entries()) fl.rotation.y = Math.sin(t * 3 + i) * 0.25;
     for (const p of pigeons) {
       if (p.flying > 0) {
         p.flying -= dt;
@@ -731,11 +584,10 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
         if (p.flying <= 0) {
           p.obj.position.copy(p.home);
           p.obj.rotation.z = 0;
-          p.vel.set(0, 0, 0);
         }
       } else {
-        p.obj.rotation.x = Math.max(0, Math.sin(t * 2.3 + p.phase)) * 0.35; // pecking
-        if (p.obj.position.distanceTo(playerPos) < 3.2) scatter(p, playerPos);
+        p.obj.rotation.x = Math.max(0, Math.sin(t * 2.3 + p.phase)) * 0.3;
+        if (p.obj.position.distanceTo(playerPos) < 3.5) scatter(p, playerPos);
       }
     }
   }
@@ -743,22 +595,21 @@ export function buildWorld(level: Level, assets: PropAssets, quality: { shadows:
   function scatter(p: Pigeon, from: THREE.Vector3): void {
     if (p.flying > 0) return;
     const away = p.obj.position.clone().sub(from).setY(0).normalize();
-    p.vel.set(away.x * 7 + (rand() - 0.5) * 3, 4 + rand() * 2, away.z * 7 + (rand() - 0.5) * 3);
+    p.vel.set(away.x * 6 + 2, 4 + rand() * 2, away.z * 3 - 3);
     p.obj.rotation.y = Math.atan2(-p.vel.z, p.vel.x) + Math.PI / 2;
     p.flying = 7;
   }
 
   return {
     root,
-    anchors,
-    sun,
+    hooks,
     update,
-    bounceAwning(id: string) {
-      const a = awningViews.get(id);
-      if (a) a.wobble = 1;
+    bounceCanopy(id: string) {
+      const c = canopyViews.get(id);
+      if (c) c.wobble = 1;
     },
     scatterPigeons(near: THREE.Vector3) {
-      for (const p of pigeons) if (p.obj.position.distanceTo(near) < 9) scatter(p, near);
+      for (const p of pigeons) if (p.obj.position.distanceTo(near) < 10) scatter(p, near);
     },
     dispose() {
       for (const d of disposables) d.dispose();

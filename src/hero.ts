@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import type { Sim } from './sim.ts';
 
-type ClipName = 'idle' | 'run' | 'jump' | 'fall' | 'climb' | 'cheer';
+type ClipName = 'idle' | 'run' | 'jump' | 'fall' | 'climb' | 'cheer' | 'flip';
 
 export class Hero {
   root = new THREE.Group();
@@ -73,6 +73,7 @@ export class Hero {
         ['fall', 'fall'],
         ['climb', 'climb'],
         ['cheer', 'cheer'],
+        ['flip', 'flip'],
       ];
       for (const [name, key] of pairs) {
         const c = find(key);
@@ -88,7 +89,7 @@ export class Hero {
           }
         }
         const a = this.mixer.clipAction(c);
-        if (name === 'jump' || name === 'cheer') {
+        if (name === 'jump' || name === 'cheer' || name === 'flip') {
           a.setLoop(name === 'cheer' ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
           a.clampWhenFinished = true;
         }
@@ -112,43 +113,53 @@ export class Hero {
     this.squash = 1;
   }
 
+  private yaw = 0;
+  private flipT = 0;
+
+  flip(): void {
+    this.flipT = 0.9;
+  }
+
   update(dt: number, sim: Sim, ropeTarget: THREE.Vector3 | null): void {
     const p = sim.p;
     this.root.position.set(p.x, p.y, p.z);
-    const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2 - sim.yaw);
-    const speed = Math.hypot(sim.vel.x, sim.vel.z);
+    const hv = Math.hypot(sim.vel.x, sim.vel.z);
+    if (hv > 0.5) this.yaw = Math.atan2(sim.vel.z, sim.vel.x);
+    const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2 - this.yaw);
+    const speed = hv;
+    this.flipT = Math.max(0, this.flipT - dt);
 
-    // choose a clip
+    // the world nearly stops while deciding: freeze the pose too
+    const animDt = sim.state === 'decide' ? dt * 0.03 : dt;
     switch (sim.state) {
-      case 'ground':
-        if (speed > 0.8) this.play('run', 0.12, Math.max(0.6, speed / 6.5));
-        else this.play('idle', 0.2);
+      case 'run':
+      case 'strip':
+        this.play('run', 0.12, Math.max(0.8, speed / 6.5));
         break;
-      case 'dash':
-        this.play('run', 0.08, 1.6);
-        break;
-      case 'air':
-        this.play(sim.vel.y > -3 ? 'jump' : 'fall', 0.15);
-        break;
+      case 'leap':
+      case 'decide':
       case 'rope':
-        this.play('jump', 0.1, 0.6);
+        this.play('jump', 0.1, 1);
+        break;
+      case 'fly':
+        if (this.flipT > 0) this.play('flip', 0.08, 1.3);
+        else this.play(sim.vel.y > -2 ? 'jump' : 'fall', 0.15);
         break;
       case 'swing':
       case 'pull':
       case 'miss':
       case 'bounce':
-      case 'respawn':
         this.play('fall', 0.12);
         break;
       case 'climb':
-        this.play('climb', 0.15, 1.6);
+        this.play('climb', 0.12, 2);
         break;
       case 'finished':
         this.play('cheer', 0.25);
         break;
     }
-    this.mixer?.update(dt);
-    this.animTime += dt;
+    this.mixer?.update(animDt);
+    this.animTime += animDt;
     if (this.fallback) animateFallback(this.fallback, sim.state, speed, this.animTime);
 
     // body orientation: hang along the rope while swinging/pulling
@@ -266,7 +277,7 @@ function makeFallback(): THREE.Group {
 export function animateFallback(fb: THREE.Group, state: string, speed: number, t: number): void {
   const r = fb.userData.rig as Rig | undefined;
   if (!r) return;
-  const run = state === 'ground' || state === 'dash' ? Math.min(1, speed / 6) : 0;
+  const run = state === 'run' || state === 'strip' ? Math.min(1, speed / 6) : 0;
   const ph = t * (6 + speed * 1.2);
   const sw = Math.sin(ph) * 0.9 * run;
   r.legL.rotation.z = sw;
@@ -279,7 +290,7 @@ export function animateFallback(fb: THREE.Group, state: string, speed: number, t
     r.armL.rotation.z = 0.6;
     r.legL.rotation.z = 0.5;
     r.legR.rotation.z = 0.2;
-  } else if (state === 'air' || state === 'miss' || state === 'bounce') {
+  } else if (state === 'fly' || state === 'leap' || state === 'decide' || state === 'miss' || state === 'bounce') {
     r.armL.rotation.z = 2.4 + Math.sin(t * 20) * 0.4;
     r.armR.rotation.z = 2.2 + Math.cos(t * 20) * 0.4;
     r.legL.rotation.z = 0.6;

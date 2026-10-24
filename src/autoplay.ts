@@ -1,82 +1,38 @@
-// A simple scripted player: runs to the planned marks, fires, then runs to the flag.
-// Used by unit tests (solvability, medal times) and by the browser test hook.
-
-import { anchorReachable, anchorHolds, type AnchorDef, type Level } from './levels.ts';
+// Scripted player for tests and the browser hook: picks hooks by a policy and times strip jumps.
+import type { Hook } from './levels.ts';
 import { NO_INPUT, Sim, type Input } from './sim.ts';
 
-/** Default plan: at every mark group, the farthest anchor that both reaches and holds. */
-export function bestPlan(level: Level): string[] {
-  const groups = new Map<string, AnchorDef[]>();
-  for (const a of level.anchors) {
-    const m = level.marks.find((x) => x.id === a.mark)!;
-    const key = `${m.top}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(a);
-  }
-  const plan: string[] = [];
-  const keys = [...groups.keys()].sort((p, q) => Number(q) - Number(p));
-  for (const k of keys) {
-    const ok = groups.get(k)!.filter((a) => anchorReachable(level, a) && anchorHolds(a));
-    ok.sort((p, q) => q.a - p.a);
-    if (ok.length) plan.push(ok[0].id);
-  }
-  return plan;
-}
+export type Policy = (choices: Hook[], sim: Sim) => Hook;
+
+/** Best play: the farthest legal hook. */
+export const bestPolicy: Policy = (choices) => choices.find((h) => h.perfect) ?? choices.find((h) => h.ok) ?? choices[0];
+/** Worst first: try every wrong hook before the right one (exercises every miss path). */
+export const wrongFirstPolicy: Policy = (choices) => choices.find((h) => !h.ok) ?? choices.find((h) => h.perfect) ?? choices[0];
 
 export class AutoPlayer {
-  plan: string[];
-  step = 0;
-  constructor(public sim: Sim, plan?: string[]) {
-    this.plan = plan ?? bestPlan(sim.level);
-  }
+  /** strip tile to jump from per strip decision id (default: the largest legal tile) */
+  stripTiles: Record<string, number> = {};
+  constructor(public sim: Sim, public policy: Policy = bestPolicy) {}
 
   input(): Input {
     const s = this.sim;
-    if (s.state !== 'ground') return NO_INPUT;
-    const next = this.plan[this.step];
-    if (next) {
-      const a = s.level.anchors.find((x) => x.id === next)!;
-      const m = s.level.marks.find((x) => x.id === a.mark)!;
-      if (Math.abs(m.top - s.p.y) < 0.6) {
-        const dx = m.x - s.p.x;
-        const dz = m.z - s.p.z;
-        const d = Math.hypot(dx, dz);
-        const active = s.activeMark();
-        if (d < 4 && active?.id === m.id) {
-          this.step++;
-          return { ...NO_INPUT, fire: true, targetId: next };
-        }
-        return this.withJump(dx / d, dz / d);
-      }
-      // the planned mark is on another roof (we fell back or skipped): try the next plan entry
+    if (s.state === 'decide') {
+      const c = s.choices();
+      if (c.length) return { ...NO_INPUT, hook: this.policy(c, s).id };
     }
-    const f = s.level.finish;
-    const dx = f.x - s.p.x;
-    const dz = f.z - s.p.z;
-    const d = Math.hypot(dx, dz) || 1;
-    return this.withJump(dx / d, dz / d);
+    if (s.state === 'strip' && s.decision?.strip) {
+      const want = this.stripTiles[s.decision.id] ?? s.decision.strip.maxN;
+      if (s.stripTile === want) return { ...NO_INPUT, jump: true };
+    }
+    return NO_INPUT;
   }
 
-  /** Jump when the roof ends just ahead (small gaps between neighbouring roofs). */
-  private withJump(mx: number, mz: number): Input {
-    const s = this.sim;
-    const ax = s.p.x + mx * 1.1;
-    const az = s.p.z + mz * 1.1;
-    const ahead = s.boxAt(ax, az, s.p.y + 0.05);
-    const jump = !ahead || ahead.top < s.p.y - 0.3;
-    return { ...NO_INPUT, moveX: mx, moveZ: mz, jump };
-  }
-
-  /** Run until finished or timeout; returns the sim. */
-  run(maxSeconds = 90, dt = 1 / 60): Sim {
-    const s = this.sim;
+  run(maxSeconds = 240, dt = 1 / 60): Sim {
     let t = 0;
-    while (!s.finished && t < maxSeconds) {
-      const inp = this.input();
-      s.update(dt, inp);
-      if (inp.fire && s.state === 'ground') this.step--; // fire was refused; retry
+    while (!this.sim.finished && t < maxSeconds) {
+      this.sim.update(dt, this.input());
       t += dt;
     }
-    return s;
+    return this.sim;
   }
 }

@@ -29,7 +29,7 @@ for (const level of LEVELS) {
     for (const a of level.anchors) {
       const s = atMark(level, a.mark);
       s.update(DT, { ...NO_INPUT, fire: true, targetId: a.id });
-      assert.equal(s.state, 'rope', `${level.id}.${a.id} fired`);
+      assert.equal(s.state as string, 'rope', `${level.id}.${a.id} fired`);
       const legal = anchorReachable(level, a) && anchorHolds(a);
       if (legal) {
         const t = runUntil(s, (x) => (x.state === 'ground' && x.assistTarget === null && x.stateT > 0.05) || x.finished);

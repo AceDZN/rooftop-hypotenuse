@@ -429,8 +429,8 @@ function updateCamera(dt: number): void {
     const s = d.strip!;
     const hookY = d.hooks[0].pos.y;
     const fovV = (camera.fov * Math.PI) / 180;
-    const needH = Math.max(hookY - s.top + 7, (s.foot - sim.p.x + 8) / (innerWidth / innerHeight));
-    look = new THREE.Vector3((sim.p.x + s.foot) / 2 + 1, (s.top + hookY) / 2, d.P.z);
+    const needH = Math.max(hookY - s.top + 12, (s.foot - sim.p.x + 8) / (innerWidth / innerHeight));
+    look = new THREE.Vector3((sim.p.x + s.foot) / 2 + 1, (s.top + hookY) / 2 + 1.5, d.P.z);
     dist = Math.max(14, needH / 2 / Math.tan(fovV / 2));
     height = 1;
   } else if (sim.state === 'swing' || sim.state === 'pull' || sim.state === 'fly') {

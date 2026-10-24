@@ -409,26 +409,30 @@ function updateCamera(dt: number): void {
   if (d && (sim.state === 'decide' || sim.state === 'rope' || sim.state === 'leap' || sim.state === 'miss' || sim.state === 'bounce')) {
     // frame the decision point and every hook
     const pts = [d.P, ...d.hooks.map((h) => h.pos)];
+    for (const hk of d.hooks) if (hk.spec.frame) pts.push({ x: hk.pos.x + 5, y: hk.pos.y - 3, z: hk.pos.z });
     if (sim.state === 'miss' || sim.state === 'bounce') pts.push({ x: d.P.x, y: d.canopy.top, z: d.P.z });
     const minX = Math.min(...pts.map((q) => q.x)) - 2.5;
     const maxX = Math.max(...pts.map((q) => q.x));
-    const minY = Math.min(...pts.map((q) => q.y));
-    const maxY = Math.max(...pts.map((q) => q.y));
+    const minY = Math.min(...pts.map((q) => q.y)) - 3.2;
+    const maxY = Math.max(...pts.map((q) => q.y)) + 3.6;
     const aspect = innerWidth / innerHeight;
-    const w = maxX - minX + 7;
-    const h = maxY - minY + 6.5;
+    const w = maxX - minX + 6;
+    const h = maxY - minY + 1;
     const fovV = (camera.fov * Math.PI) / 180;
     const needH = Math.max(h, w / aspect);
     dist = Math.max(9, needH / 2 / Math.tan(fovV / 2));
-    look = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2 + 1.2, (d.P.z + Math.max(...pts.map((q) => q.z))) / 2);
-    height = 1;
+    look = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (d.P.z + Math.max(...pts.map((q) => q.z))) / 2);
+    height = d.camYaw ? dist * 0.42 : 1;
     yaw = d.camYaw;
     follow = 3;
   } else if (d && d.kind === 'strip' && sim.state === 'strip') {
     const s = d.strip!;
-    look = new THREE.Vector3((sim.p.x + s.foot) / 2 + 1, s.top + 5, d.P.z);
-    dist = 22;
-    height = 2;
+    const hookY = d.hooks[0].pos.y;
+    const fovV = (camera.fov * Math.PI) / 180;
+    const needH = Math.max(hookY - s.top + 7, (s.foot - sim.p.x + 8) / (innerWidth / innerHeight));
+    look = new THREE.Vector3((sim.p.x + s.foot) / 2 + 1, (s.top + hookY) / 2, d.P.z);
+    dist = Math.max(14, needH / 2 / Math.tan(fovV / 2));
+    height = 1;
   } else if (sim.state === 'swing' || sim.state === 'pull' || sim.state === 'fly') {
     look = p.clone().add(new THREE.Vector3(sim.vel.x * 0.25 + 2, 1, 0));
     dist = 20;
@@ -510,7 +514,7 @@ function legsLabel(hk: Hook): string {
   const s = hk.spec;
   if (!level.labels) return '<span>↔ ? מ׳</span><br><span>↕ ? מ׳</span>';
   const up = s.b < 0 ? `${-s.b} מ׳ ↓` : `${s.b} מ׳ ↕`;
-  if (s.z !== undefined && s.z !== 0) return `x <bdi dir="ltr">${s.a}</bdi> · z <bdi dir="ltr">${s.z}</bdi><br>${up}`;
+  if (s.z !== undefined && s.z !== 0) return `<bdi dir="ltr">x ${s.a} · z ${s.z}</bdi><br>${up}`;
   let html = `${s.a} מ׳ ↔<br>${up}`;
   if (hintOn) html += `<span class="hint"><bdi dir="ltr">${s.z !== undefined && s.z !== 0 ? `${s.a}² + ${s.z}² + ${Math.abs(s.b)}²` : `${s.a}² + ${Math.abs(s.b)}²`} = ?</bdi></span>`;
   return html;
@@ -540,7 +544,7 @@ function updateTags(): void {
         tagEls.set(hk.id, el);
       }
       el.style.left = `${s.x - shift}px`;
-      el.style.top = `${Math.min(...placed.map((q) => q.s.y)) - 100}px`;
+      el.style.top = `${Math.max(innerHeight < 500 ? 46 : 64, Math.min(...placed.map((q) => q.s.y)) - 100)}px`;
       el.classList.toggle('used', sim.tried.has(hk.id));
       el.classList.toggle('focus', hoverId === hk.id);
       const html = `<div class="num">${hk.num}</div><div class="legs">${legsLabel(hk)}</div>`;
@@ -567,6 +571,22 @@ function updateOverlay(): void {
         const corner = new THREE.Vector3(A.x, H.y, A.z);
         const focus = hoverId === hk.id || sim.choices().length === 1;
         const r = focus ? 0.06 : 0.03;
+        if (hk.spec.z) {
+          // space: x leg, z leg on the floor (dashed diagonal), then up to the hook
+          const cx = new THREE.Vector3(A.x, H.y, H.z);
+          overlay.line(H, cx, false, r);
+          overlay.line(cx, corner, false, r);
+          overlay.line(H, corner, true, r * 0.8);
+          overlay.line(corner, A, false, r);
+          overlay.line(H, A, true, r);
+          if (focus) {
+            overlay.label(H.clone().lerp(cx, 0.5), `x ${hk.spec.a}`, '', camera, w, h, 0, 16);
+            overlay.label(cx.clone().lerp(corner, 0.5), `z ${hk.spec.z}`, '', camera, w, h, 16, 10);
+            overlay.label(corner.clone().lerp(A, 0.5), `↕ ${hk.spec.b}`, '', camera, w, h, 30, 0);
+            overlay.label(H.clone().lerp(A, 0.5), '?', 'q', camera, w, h, -18, -18);
+          }
+          continue;
+        }
         overlay.line(H, corner, false, r);
         overlay.line(corner, A, false, r);
         overlay.line(H, A, true, r);
@@ -583,6 +603,15 @@ function updateOverlay(): void {
       const v = world?.hooks.get(hk.id);
       if (v?.members) for (const m of v.members) overlay.label(m.mid, m.text, hk.holds ? 'member' : 'member bad', camera, w, h);
     }
+  }
+  if (d && d.kind === 'strip' && (sim.state === 'strip' || sim.state === 'rope') && screen === 'play') {
+    const st = d.strip!;
+    const hk = d.hooks[0];
+    const A = new THREE.Vector3(hk.pos.x, hk.pos.y, hk.pos.z);
+    overlay.label(A.clone().add(new THREE.Vector3(1.6, -0.6, 0)), level.labels ? `↕ ${st.b} מ׳` : '↕ ?', 'gauntlet', camera, w, h);
+    const head = new THREE.Vector3(sim.p.x, sim.p.y + 2.3, sim.p.z);
+    if (sim.state === 'strip') overlay.label(head, level.labels ? `↔ ${sim.stripTile} מ׳` : '↔ ?', 'short', camera, w, h);
+    overlay.label(new THREE.Vector3(sim.p.x, sim.p.y - 0.9, sim.p.z), `L = ${level.L}`, 'gauntlet', camera, w, h);
   }
   if (shortTag) {
     overlay.label(shortTag.pos, shortTag.text, 'short', camera, w, h, 0, -34);

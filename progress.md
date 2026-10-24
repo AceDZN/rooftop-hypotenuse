@@ -1,18 +1,28 @@
 # Progress: Rooftop Hypotenuse
 
-## 2026-10-24
+## 24 Oct 2026
 
-- Read COMMON.md, BUILD_HANDOFF.md and the design reset. The loop here is skilled traversal (run → judge → commit → swing/fall), not delivery or collection.
-- Created the public repo https://github.com/AceDZN/rooftop-hypotenuse at the user's request. This folder is now its own git repository nested in idea-plotter, with commits on `main`.
-- Tripo (user's Chrome): 4 generations (hero in T-pose, solar heater, pigeon, water tank). Hero retopologised to 18.8k tris and Mixamo-rigged; clips idle/run/fall applied. Export blocked once the Chrome window went hidden (see ASSETS.md).
-- ChatGPT image generation (user's Chrome): 4 gameplay mockups (aim, fail, mobile swing, results) in `design/mockups/`, used as the UI target.
-- Pure rules + 8 authored levels + deterministic sim. 34 unit tests, including a simulated play-through of every level and every authored line (legal lines land on their roof; wrong lines bounce on the awning and climb back in 1.5–3.4 s).
-- Found and fixed a real bug through the tests: the swing's "don't drag through a roof" safety fired on the take-off plank, so swings released instantly.
-- Scene, HUD, touch controls, screens and synthesized audio built and compared against the mockups in a real browser (desktop 1024×768 pane and 844×390 phone landscape).
-- Fixed in-browser: TDZ crashes in the world builder, hidden explanation card, camera staring up at 24 m hooks, mirrored sign text, bidi flipping of formulas inside Hebrew notes, awning shot blocked by poles.
+### v1 (morning)
+
+- Third-person free-run grapple game: rules, 8 levels, sim, scene, HUD, 4 ChatGPT mockups.
+- Public repo https://github.com/AceDZN/rooftop-hypotenuse (this folder is its own git repo nested in idea-plotter; commits on `main`).
+- Tripo: 4 generations (hero in T-pose, solar heater, pigeon, water tank); hero retopologised and rigged.
+- Rejected by the user in play (confusing, boring, controls; models missing because Chrome was hidden during export).
+
+### v2 (afternoon)
+
+- Replan in `design/REDESIGN.md`. Three new ChatGPT mockups (bullet-time decision, wrong choice, phone jump strip).
+- Tripo: re-applied the jump/climb/cheer clips and added flip; exported the hero (skeleton + 7 clips) and all 3 props; optimised to 1.1–1.4 MB each; in `public/models/`.
+- Rebuilt as a one-tap side-view swing runner:
+  - New level specs and course builder.
+  - New deterministic sim.
+  - Side camera that frames each decision.
+  - Hook tags, combo and stars HUD.
+  - Jump strip, mid-air chains, 3D courtyard, brackets, night bulbs.
+- 33 tests, browser verification, headless screenshots, docs.
 
 ## Next
 
-1. With Chrome visible: re-apply the jump/climb/cheer clips, export the hero GLB (skeleton + clips) and the 3 props, optimise to ≤ 3 MB each, put them in `public/models/`, record hashes in ASSETS.md.
-2. Tune medal thresholds with real players (current gold ≈ 1.5–2× the scripted best route).
-3. Human playtest for feel: swing speed (`TUNE.swingGravity`, `swingKick`, `reelFraction`) and camera.
+1. Put it in front of grade-8 kids: watch the first gap (do they understand "tap the hook"?), the strip timing, and L4/L6 difficulty.
+2. If the hero reads too small in wide decision shots, try a closer camera or a portrait layout for phones.
+3. Optional: deploy the static `dist/` (the user mentioned Vercel). Not done.

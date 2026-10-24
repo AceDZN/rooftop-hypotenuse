@@ -376,7 +376,7 @@ export function buildWorld(course: Course, assets: PropAssets): World {
           track(new THREE.PlaneGeometry(3.6, 1.6)),
           track(new THREE.MeshStandardMaterial({ map: track(signTexture(signWords[signIdx++ % signWords.length], ok ? '#1f6f68' : '#b2462e', '#fff3dc')), side: THREE.DoubleSide, roughness: 0.7 })),
         );
-        sign.position.copy(loc(new THREE.Vector3((T.x + Pt.x) / 2, Math.min(T.y, Pt.y) - 1.5, fz - 0.05)));
+        sign.position.copy(loc(new THREE.Vector3(Pt.x - 1.9, Qt.y - 1.1, fz - 0.05)));
         bracket.add(sign);
         group.remove(ring, hookMesh);
         ring.position.copy(loc(pos));
@@ -402,6 +402,13 @@ export function buildWorld(course: Course, assets: PropAssets): World {
         tile.rotation.x = -Math.PI / 2;
         tile.position.set(s.foot - n, s.top + 0.02, d.P.z);
         root.add(tile);
+        // upright plate on the front edge so the number reads from the side camera
+        const plate = new THREE.Mesh(
+          track(new THREE.PlaneGeometry(0.86, 0.62)),
+          track(new THREE.MeshBasicMaterial({ map: track(labelTexture(String(n), { bg: '#fbf3e2', fg: '#b4521f', w: 128, h: 92 })) })),
+        );
+        plate.position.set(s.foot - n, s.top - 0.42, d.P.z + 0.86);
+        root.add(plate);
       }
       const hk = d.hooks[0];
       const jibBase = s.foot + 2.5;

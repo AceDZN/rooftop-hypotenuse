@@ -39,29 +39,28 @@ async function session(name, viewport, touch, steps) {
     await page.waitForTimeout(150);
     await page.screenshot({ path: `screenshots/${shot}.png` });
     const state = await page.evaluate(() => JSON.parse(window.render_game_to_text()));
-    console.log(shot, state.level, state.player.state, `t=${state.timer}`, state.lastOutcome ? `${state.lastOutcome.kind}:${state.lastOutcome.anchor}` : '', JSON.stringify(state.assets));
+    console.log(shot, state.level, state.player.state, `stars=${state.stars}`, state.lastOutcome ? `${state.lastOutcome.kind}:${state.lastOutcome.hook}` : '', JSON.stringify(state.assets));
   }
   await page.close();
 }
 
-const until = `window.__until = (pred, max = 3000) => { let i = 0; while (!pred(window.__rh.sim) && i < max) { window.advanceTime(1000 / 60); i++; } return i; };`;
-
 await session('desktop', { width: 1280, height: 720 }, false, [
   ['01-title', () => 0],
-  ['02-aim', `${until} window.__rh.startLevel(0); window.__rh.teleportToMark('M1'); window.advanceTime(1200); window.__rh.setTarget('A'); window.advanceTime(30);`],
-  ['03-swing', `window.__rh.setTarget('A'); window.__rh.fire(); window.advanceTime(420);`],
-  ['04-miss', `window.__rh.startLevel(0); window.__rh.autoplay(['B','A']); window.__until((s) => s.state === 'bounce'); window.advanceTime(100);`],
-  ['05-results', `window.__until(() => JSON.parse(window.render_game_to_text()).screen === 'results', 5000); window.advanceTime(200);`],
-  ['06-courtyard', `window.__rh.startLevel(5); window.__rh.teleportToMark('M1'); window.advanceTime(1500); window.__rh.setTarget('A'); window.advanceTime(30);`],
-  ['07-brackets', `window.__rh.startLevel(6); window.__rh.teleportToMark('M1'); window.advanceTime(1500); window.__rh.setTarget('B'); window.advanceTime(30);`],
-  ['08-night', `window.__rh.startLevel(7); window.__rh.teleportToMark('M1'); window.advanceTime(1500); window.__rh.setTarget('B'); window.advanceTime(30);`],
-  ['09-downswing', `window.__rh.startLevel(4); window.__rh.teleportToMark('M1'); window.advanceTime(1500); window.__rh.setTarget('A'); window.__rh.fire(); window.advanceTime(500);`],
+  ['02-decide', `window.__rh.startLevel(1); window.__rh.until('decide'); window.advanceTime(1500); window.__rh.hover(3); window.advanceTime(30);`],
+  ['03-swing', `window.__rh.tapHook(3); window.advanceTime(430);`],
+  ['04-miss', `window.__rh.startLevel(0); window.__rh.until('decide'); window.advanceTime(1500); window.__rh.tapHook(2); window.__rh.until('bounce'); window.advanceTime(150);`],
+  ['05-strip', `window.__rh.startLevel(2); window.__rh.autoplay('best'); window.__rh.until('strip', 5000); window.__rh.stopAuto(); window.advanceTime(1300);`],
+  ['06-courtyard', `window.__rh.startLevel(5); window.__rh.until('decide'); window.advanceTime(1500); window.__rh.hover(1); window.advanceTime(30);`],
+  ['07-brackets', `window.__rh.startLevel(6); window.__rh.until('decide'); window.advanceTime(1500); window.__rh.hover(1); window.advanceTime(30);`],
+  ['08-night', `window.__rh.startLevel(7); window.__rh.until('decide'); window.advanceTime(1500);`],
+  ['09-downswing', `window.__rh.startLevel(4); window.__rh.until('decide'); window.advanceTime(1500); window.__rh.hover(3); window.advanceTime(30);`],
+  ['10-results', `window.__rh.startLevel(0); window.__rh.autoplay('wrong'); let i = 0; while (JSON.parse(window.render_game_to_text()).screen !== 'results' && i++ < 6000) window.advanceTime(1000 / 60);`],
 ]);
 
 await session('mobile', { width: 844, height: 390 }, true, [
-  ['10-mobile-aim', `${until} window.__rh.startLevel(0); window.__rh.teleportToMark('M1'); window.advanceTime(1200); window.__rh.setTarget('A'); window.advanceTime(30);`],
-  ['11-mobile-swing', `window.__rh.setTarget('A'); window.__rh.fire(); window.advanceTime(420);`],
-  ['12-mobile-miss', `window.__rh.startLevel(0); window.__rh.autoplay(['B','A']); window.__until((s) => s.state === 'bounce'); window.advanceTime(100);`],
+  ['11-mobile-decide', `window.__rh.startLevel(1); window.__rh.until('decide'); window.advanceTime(1500);`],
+  ['12-mobile-strip', `window.__rh.startLevel(2); window.__rh.autoplay('best'); window.__rh.until('strip', 5000); window.__rh.stopAuto(); window.advanceTime(1300);`],
+  ['13-mobile-miss', `window.__rh.startLevel(0); window.__rh.until('decide'); window.advanceTime(1500); window.__rh.tapHook(2); window.__rh.until('bounce'); window.advanceTime(150);`],
 ]);
 
 await browser.close();

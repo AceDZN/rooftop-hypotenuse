@@ -1182,3 +1182,46 @@ body.touch #buttons {
     width: 56px;
   }
 }
+/* v2: keep the explanation card clear of the canopy bounce (bottom-left/centre of the frame) */
+#explain {
+  left: auto;
+  right: calc(18px + var(--safe-r));
+  bottom: calc(90px + var(--safe-b));
+  transform: none;
+  min-width: 300px;
+  max-width: 420px;
+}
+#explain .math {
+  font-size: clamp(22px, 2.8vw, 38px);
+}
+body.touch #explain {
+  top: 70px;
+  bottom: auto;
+  right: calc(12px + var(--safe-r));
+  transform: none;
+  width: min(46vw, 360px);
+}
+@keyframes pop2 {
+  from {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+}
+#explain {
+  animation: pop2 0.25s ease-out;
+}
+.level-grid .lv-stars {
+  color: #f2b632;
+  font-size: 18px;
+  letter-spacing: 2px;
+}
+.level-grid .lv-stars .dim {
+  color: #d8d2c4;
+}
+
+#jumpBtn {
+  bottom: calc(96px + var(--safe-b));
+}
+body.touch #jumpBtn {
+  bottom: calc(22px + var(--safe-b));
+}

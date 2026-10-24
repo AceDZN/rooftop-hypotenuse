@@ -10,9 +10,11 @@ export interface Input {
   hook: string | null;
   /** jump on a strip / let go early while swinging (edge triggered) */
   jump: boolean;
+  /** strips: tile picked by tapping it (the runner runs there and jumps) */
+  tile?: number | null;
 }
 
-export const NO_INPUT: Input = { hook: null, jump: false };
+export const NO_INPUT: Input = { hook: null, jump: false, tile: null };
 
 export interface Outcome {
   kind: 'hit' | 'miss' | 'collapse';
@@ -120,6 +122,9 @@ export class Sim {
   stripTile = 0;
   /** strips: the runner leaps off the walkway end while the rope flies */
   stripLeap = false;
+  /** strips: waiting at the start for a choice; then running to `stripTarget` (null = jump on input) */
+  stripWaiting = false;
+  stripTarget: number | null = null;
   lastOutcome: Outcome | null = null;
   log: LogEvent[] = [];
   events: string[] = [];
@@ -189,20 +194,22 @@ export class Sim {
   update(dt: number, input: Input): void {
     let hook = input.hook;
     let jump = input.jump;
+    let tile = input.tile ?? null;
     let remaining = dt;
     while (remaining > 1e-9) {
       const h = Math.min(STEP, remaining);
       this.t += h;
       this.stateT += h;
       if (!this.finished && this.state !== 'decide') this.timer += h;
-      this.step(h, hook, jump);
+      this.step(h, hook, jump, tile);
       hook = null;
       jump = false;
+      tile = null;
       remaining -= h;
     }
   }
 
-  private step(dt: number, tapHook: string | null, jump: boolean): void {
+  private step(dt: number, tapHook: string | null, jump: boolean, tile: number | null = null): void {
     switch (this.state) {
       case 'run':
         return this.stepRun(dt);
@@ -225,7 +232,7 @@ export class Sim {
       case 'climb':
         return this.stepClimb(dt);
       case 'strip':
-        return this.stepStrip(dt, jump || tapHook !== null);
+        return this.stepStrip(dt, jump || tapHook !== null, tile);
       case 'finished':
         this.vel = v();
         return;
@@ -263,6 +270,9 @@ export class Sim {
         this.tried.clear();
         this.missedHere = false;
         this.p.z = d.P.z;
+        this.p.x = d.strip!.foot - 10.4;
+        this.stripWaiting = true;
+        this.stripTarget = null;
         this.setState('strip');
         this.events.push('strip');
         return;
@@ -594,7 +604,7 @@ export class Sim {
       // trampoline back up to where the choice was made
       if (d.kind === 'strip') {
         const s = d.strip!;
-        this.arcTo({ x: s.foot - 9.5, y: s.top, z: d.P.z }, TUNE.bounceTime, 4.5);
+        this.arcTo({ x: s.foot - 10.4, y: s.top, z: d.P.z }, TUNE.bounceTime, 4.5);
       } else {
         this.arcTo({ x: d.P.x, y: d.P.y - HAND, z: d.P.z }, TUNE.bounceTime, 3.2);
       }
@@ -606,6 +616,8 @@ export class Sim {
     const d = this.decision!;
     this.brokenHook = null;
     if (d.kind === 'strip') {
+      this.stripWaiting = true;
+      this.stripTarget = null;
       this.setState('strip');
       return;
     }
@@ -629,18 +641,34 @@ export class Sim {
 
   // ---------- jump strip ----------
 
-  private stepStrip(dt: number, jump: boolean): void {
+  private stepStrip(dt: number, jump: boolean, tile: number | null): void {
     const d = this.decision!;
     const s = d.strip!;
-    this.vel = v(TUNE.stripSpeed, 0, 0);
-    this.p.x += TUNE.stripSpeed * dt;
+    if (tile !== null && tile >= 1 && tile <= 10 && s.foot - tile > this.p.x - 0.01) {
+      this.stripTarget = tile;
+      this.stripWaiting = false;
+    }
+    if (this.stripWaiting) {
+      // wait at the start until a tile is picked (or jump is pressed to run and time it)
+      this.vel = v(0, 0, 0);
+      this.p.y = s.top;
+      this.stripTile = clamp(Math.round(s.foot - this.p.x), 1, 10);
+      if (jump) this.stripWaiting = false;
+      return;
+    }
+    const target = this.stripTarget;
+    const speed = target !== null ? TUNE.stripSpeed * 1.8 : TUNE.stripSpeed;
+    this.vel = v(speed, 0, 0);
+    this.p.x += speed * dt;
     this.p.y = s.top;
     const n = clamp(Math.round(s.foot - this.p.x), 1, 10);
     this.stripTile = n;
-    if (jump || this.p.x >= s.foot - 1) {
-      const tile = jump ? n : 1;
-      this.p.x = s.foot - tile;
-      this.fire(d, d.hooks[0], this.hand(), tile);
+    const arrived = target !== null && this.p.x >= s.foot - target;
+    if ((target === null && jump) || arrived || this.p.x >= s.foot - 1) {
+      const t = arrived ? target! : target === null && jump ? n : 1;
+      this.p.x = s.foot - t;
+      this.stripTarget = null;
+      this.fire(d, d.hooks[0], this.hand(), t);
       this.events.push('jump');
     }
   }

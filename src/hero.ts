@@ -109,6 +109,11 @@ export class Hero {
     this.current = name;
   }
 
+  private seek(name: ClipName, frac: number): void {
+    const a = this.actions.get(name);
+    if (a) a.time = a.getClip().duration * frac;
+  }
+
   bounce(): void {
     this.squash = 1;
   }
@@ -120,26 +125,43 @@ export class Hero {
     this.flipT = 0.9;
   }
 
-  update(dt: number, sim: Sim, ropeTarget: THREE.Vector3 | null): void {
+  private prevState = '';
+
+  update(dt: number, sim: Sim, ropeTarget: THREE.Vector3 | null, waiting = false): void {
     const p = sim.p;
     this.root.position.set(p.x, p.y, p.z);
     const hv = Math.hypot(sim.vel.x, sim.vel.z);
-    if (hv > 0.5) this.yaw = Math.atan2(sim.vel.z, sim.vel.x);
+    const d = sim.decision;
+    if (d && (sim.state === 'decide' || sim.state === 'bounce' || sim.state === 'leap' || sim.state === 'rope' || sim.state === 'miss')) {
+      // always face the hooks, even while bouncing back from a miss
+      const hx = d.hooks.reduce((s, h) => s + h.pos.x, 0) / d.hooks.length;
+      const hz = d.hooks.reduce((s, h) => s + h.pos.z, 0) / d.hooks.length;
+      this.yaw = Math.atan2(hz - d.P.z, hx - d.P.x);
+    } else if (hv > 0.5) this.yaw = Math.atan2(sim.vel.z, sim.vel.x);
     const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2 - this.yaw);
     const speed = hv;
     this.flipT = Math.max(0, this.flipT - dt);
 
     // the world nearly stops while deciding: freeze the pose too
     const animDt = sim.state === 'decide' ? dt * 0.03 : dt;
-    switch (sim.state) {
+    const entered = sim.state !== this.prevState;
+    this.prevState = sim.state;
+    switch (waiting && sim.state === 'run' ? 'idle' : sim.state) {
+      case 'idle':
+        this.play('idle', 0.2);
+        break;
       case 'run':
       case 'strip':
         this.play('run', 0.12, Math.max(0.8, speed / 6.5));
         break;
       case 'leap':
-      case 'decide':
       case 'rope':
         this.play('jump', 0.1, 1);
+        break;
+      case 'decide':
+        // freeze on the airborne frame of the jump clip (not the crouch at its start)
+        this.play('jump', 0.05, 1);
+        if (entered) this.seek('jump', 0.42);
         break;
       case 'fly':
         if (this.flipT > 0) this.play('flip', 0.08, 1.3);

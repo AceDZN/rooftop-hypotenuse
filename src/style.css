@@ -1225,3 +1225,125 @@ body.touch #explain {
 body.touch #jumpBtn {
   bottom: calc(22px + var(--safe-b));
 }
+
+/* ---------- level intro card (tap anywhere / button to start) ---------- */
+#intro {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, rgba(31, 79, 82, 0.35), rgba(240, 127, 31, 0.2));
+  padding: 16px;
+  z-index: 5;
+}
+#intro .card {
+  background: var(--cream);
+  border: 4px solid var(--teal);
+  border-radius: 26px;
+  padding: 22px 28px;
+  max-width: 560px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  animation: pop2 0.3s ease-out;
+}
+#intro .kicker {
+  display: inline-block;
+  background: var(--teal);
+  color: var(--cream);
+  border-radius: 12px;
+  padding: 3px 12px;
+  font-weight: 700;
+  font-size: 15px;
+}
+#intro h2 {
+  margin: 10px 0 6px;
+  font-size: clamp(30px, 5vw, 46px);
+  color: var(--teal);
+}
+#intro p {
+  font-size: 18px;
+  line-height: 1.5;
+  margin: 6px 0;
+}
+#intro .goal {
+  color: #5c4a3a;
+  font-size: 16px;
+}
+#intro .rope-big {
+  display: inline-block;
+  margin: 10px 0 14px;
+  background: var(--orange);
+  color: #fff8ea;
+  border-radius: 14px;
+  padding: 6px 18px;
+  font-weight: 800;
+  font-size: 22px;
+}
+#intro .tap-any {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #6a6a6a;
+}
+@media (max-height: 520px) {
+  #intro .card {
+    padding: 12px 18px;
+  }
+  #intro h2 {
+    margin: 4px 0;
+  }
+  #intro p {
+    font-size: 15px;
+    margin: 3px 0;
+  }
+  #intro .goal {
+    display: none;
+  }
+}
+body.touch #prompt {
+  top: auto;
+  bottom: calc(14px + var(--safe-b));
+}
+
+.hooktag .num.c1 { background: #e8742a; }
+.hooktag .num.c2 { background: #1fa7b6; }
+.hooktag .num.c3 { background: #d9548f; }
+
+#coach {
+  position: fixed;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 86vw);
+  background: #fbf3e2;
+  border: 3px solid var(--teal);
+  border-radius: 18px;
+  padding: 10px 14px;
+  font-weight: 700;
+  font-size: clamp(15px, 1.8vw, 20px);
+  line-height: 1.45;
+  box-shadow: var(--shadow);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  animation: pop2 0.3s ease-out;
+  z-index: 4;
+}
+#coach button {
+  flex: none;
+  font-family: var(--font);
+  font-weight: 800;
+  background: var(--teal);
+  color: var(--cream);
+  border: none;
+  border-radius: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+@media (max-height: 520px) {
+  #coach {
+    top: 52px;
+    font-size: 14px;
+    padding: 6px 10px;
+  }
+}

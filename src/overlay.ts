@@ -15,6 +15,9 @@ export class Overlay {
   group = new THREE.Group();
   private solid: THREE.MeshBasicMaterial;
   private dash: THREE.MeshBasicMaterial;
+  private dark: THREE.MeshBasicMaterial;
+  /** world-units multiplier so lines keep a similar on-screen width at any camera distance */
+  thickness = 1;
   private pool: THREE.Mesh[] = [];
   private used = 0;
   private geo = new THREE.CylinderGeometry(1, 1, 1, 6, 1);
@@ -26,7 +29,8 @@ export class Overlay {
   constructor(labelsRoot: HTMLElement) {
     this.labels = labelsRoot;
     this.solid = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95 });
-    this.dash = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.85 });
+    this.dash = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.95 });
+    this.dark = new THREE.MeshBasicMaterial({ color: 0x14302f, depthTest: false, transparent: true, opacity: 0.55 });
     this.group.renderOrder = 10;
     this.reticle = document.createElement('div');
     this.reticle.className = 'reticle';
@@ -39,15 +43,15 @@ export class Overlay {
     this.labelUsed = 0;
   }
 
-  private seg(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material): void {
+  private seg(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material, order = 11): void {
     let m = this.pool[this.used];
     if (!m) {
       m = new THREE.Mesh(this.geo, mat);
-      m.renderOrder = 10;
       m.frustumCulled = false;
       this.pool.push(m);
       this.group.add(m);
     }
+    m.renderOrder = order;
     m.material = mat;
     m.visible = true;
     const d = new THREE.Vector3().subVectors(b, a);
@@ -59,21 +63,26 @@ export class Overlay {
   }
 
   line(a: THREE.Vector3, b: THREE.Vector3, dashed = false, r = 0.035): void {
+    r *= this.thickness;
+    // dark outline underneath so white lines read over bright sky and plaster
+    this.seg(a, b, r * 2.1, this.dark, 10);
     if (!dashed) {
       this.seg(a, b, r, this.solid);
       return;
     }
     const l = a.distanceTo(b);
-    const n = Math.max(2, Math.floor(l / 0.45));
+    const dashLen = Math.max(0.45, 0.45 * this.thickness);
+    const n = Math.max(2, Math.floor(l / dashLen));
     for (let i = 0; i < n; i += 2) {
       const p = a.clone().lerp(b, i / n);
       const q = a.clone().lerp(b, Math.min(1, (i + 1) / n));
-      this.seg(p, q, r * 0.85, this.dash);
+      this.seg(p, q, r * 0.9, this.dash);
     }
   }
 
   /** Small square marking the right angle at `corner` between directions u and v. */
   rightAngle(corner: THREE.Vector3, u: THREE.Vector3, v: THREE.Vector3, s = 0.45): void {
+    s *= Math.max(1, this.thickness * 0.8);
     const a = corner.clone().addScaledVector(u, s);
     const b = corner.clone().addScaledVector(u, s).addScaledVector(v, s);
     const c = corner.clone().addScaledVector(v, s);

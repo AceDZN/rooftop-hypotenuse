@@ -43,6 +43,10 @@ export interface LevelSpec {
   space?: boolean;
   gaps: GapSpec[];
   lesson: string;
+  /** coach bubble shown the first time this level's twist appears */
+  coach: string;
+  /** coach bubble for the first jump strip (level 3) */
+  coachStrip?: string;
 }
 
 export type HookKind = 'swing' | 'pull' | 'bracket';
@@ -138,6 +142,7 @@ const fr = (post: number, beam: number, brace: number): Frame => ({ post, beam, 
 export const LEVELS: LevelSpec[] = [
   {
     id: 'L1',
+    coach: 'הזמן עצר! לכל וו רואים כמה רחוק (↔) וכמה גבוה (↕). החבל 5 מ׳. הקישו על וו שהקו הישר אליו לא ארוך מ־5.',
     num: 1,
     title: 'קו ראשון',
     subtitle: 'החבל באורך 5 מ׳. בכל קפיצה הזמן כמעט עוצר: הקישו על הוו שהחבל מגיע אליו.',
@@ -148,16 +153,17 @@ export const LEVELS: LevelSpec[] = [
     labels: true,
     gaps: [
       { kind: 'hooks', hooks: [h(3, 4), h(4, 4)] },
-      { kind: 'hooks', hooks: [h(5, 2), h(4, 3)] },
-      { kind: 'hooks', hooks: [h(2, 4), h(3, 5)] },
-      { kind: 'hooks', hooks: [h(4, 2), h(4, 4)] },
-      { kind: 'hooks', hooks: [h(3, 4), h(4, 3)] },
-      { kind: 'hooks', hooks: [h(4, 4), h(3, 3)] },
+      { kind: 'hooks', hooks: [h(2, 5), h(4, 3)] },
+      { kind: 'hooks', hooks: [h(1, 5), h(3, 4)] },
+      { kind: 'hooks', hooks: [h(4, 2), h(5, 1)] },
+      { kind: 'hooks', hooks: [h(3, 5), h(4, 2)] },
+      { kind: 'hooks', hooks: [h(2, 5), h(3, 4), h(4, 4)] },
     ],
     lesson: 'היתר הוא הצלע הארוכה: 3² + 4² = 9 + 16 = 25 = 5². בדיוק באורך החבל, ולכן מגיע.',
   },
   {
     id: 'L2',
+    coach: 'שלושה ווים. ⭐ מקבל מי שבוחר את הרחוק ביותר שעדיין מגיע. בדקו: a² + b² ≤ 100.',
     num: 2,
     title: 'בחרו את הרחוק',
     subtitle: 'L = 10. שלושה ווים, לפחות אחד לא מגיע. הוו הרחוק ביותר שעדיין מגיע נותן ⭐.',
@@ -168,17 +174,19 @@ export const LEVELS: LevelSpec[] = [
     labels: true,
     gaps: [
       { kind: 'hooks', hooks: [h(6, 8), h(8, 7), h(9, 3)] },
-      { kind: 'hooks', hooks: [h(5, 5), h(8, 6), h(7, 8)] },
-      { kind: 'hooks', hooks: [h(6, 6), h(9, 4), h(10, 3)] },
-      { kind: 'hooks', hooks: [h(4, 8), h(7, 7), h(9, 5)] },
-      { kind: 'hooks', hooks: [h(6, 8), h(8, 6), h(9, 5)] },
-      { kind: 'hooks', hooks: [h(5, 8), h(9, 3), h(10, 2)] },
-      { kind: 'hooks', hooks: [h(7, 7), h(8, 5), h(9, 5)] },
+      { kind: 'hooks', hooks: [h(3, 10), h(6, 8), h(9, 5)] },
+      { kind: 'hooks', hooks: [h(4, 9), h(5, 9), h(8, 6)] },
+      { kind: 'hooks', hooks: [h(2, 10), h(7, 7), h(10, 1)] },
+      { kind: 'hooks', hooks: [h(5, 9), h(8, 5), h(9, 4)] },
+      { kind: 'hooks', hooks: [h(6, 8), h(7, 8), h(9, 5)] },
+      { kind: 'hooks', hooks: [h(4, 10), h(6, 7), h(8, 6)] },
     ],
     lesson: '6² + 8² = 100 ≤ 100 ו־9² + 3² = 90 ≤ 100 מגיעים. 8² + 7² = 113 > 100 לא מגיע.',
   },
   {
     id: 'L3',
+    coach: 'הוו גבוה: ↕ גדול. גם כך בודקים a² + b² ≤ 169.',
+    coachStrip: 'פיגום! הוו 12 מ׳ מעל, החבל 13. מאיזה מספר אפשר לקפוץ? הקישו על מספר על הפיגום.',
     num: 3,
     title: 'מאיפה לקפוץ',
     subtitle: 'L = 13. על הפיגום מספרים: כמה מטרים עד מתחת לוו. הקישו "קפיצה" בזמן.',
@@ -188,7 +196,7 @@ export const LEVELS: LevelSpec[] = [
     hints: true,
     labels: true,
     gaps: [
-      { kind: 'hooks', hooks: [h(5, 12), h(10, 9)] },
+      { kind: 'hooks', hooks: [h(3, 13), h(5, 12)] },
       { kind: 'strip', b: 12 },
       { kind: 'hooks', hooks: [h(10, 7), h(11, 7), h(12, 5)] },
       { kind: 'strip', b: 10 },
@@ -198,6 +206,7 @@ export const LEVELS: LevelSpec[] = [
   },
   {
     id: 'L4',
+    coach: 'בחירה באוויר! אחרי כל תפיסה הווים הבאים כבר מחכים. זהו שלשות: 8-15-17, 9-12-15, 5-12-13.',
     num: 4,
     title: 'שרשרת שלשות',
     subtitle: 'חבל 17 מ׳. בחרו את הוו הבא עוד באוויר.',
@@ -207,14 +216,15 @@ export const LEVELS: LevelSpec[] = [
     hints: true,
     labels: true,
     gaps: [
-      { kind: 'chain', steps: [[h(8, 15), h(10, 14)], [h(9, 12), h(11, 13)], [h(5, 12), h(12, 5), h(16, 6)]] },
+      { kind: 'chain', steps: [[h(6, 16), h(8, 15)], [h(9, 12), h(11, 13)], [h(5, 12), h(12, 5), h(16, 6)]] },
       { kind: 'hooks', hooks: [h(12, 12), h(15, 8), h(16, 6)] },
-      { kind: 'chain', steps: [[h(12, 9), h(16, 6)], [h(8, 15), h(12, 12)]] },
+      { kind: 'chain', steps: [[h(10, 14), h(12, 9)], [h(4, 17), h(8, 15), h(12, 12)]] },
     ],
     lesson: '8-15-17, ‏9-12-15 (זה 3-4-5 כפול 3), ‏5-12-13. ו־12² + 12² = 288 ≤ 289: מגיע בקושי!',
   },
   {
     id: 'L5',
+    coach: 'הווים מתחתיכם. ↓ הוא ניצב רגיל: (−5)² = 25.',
     num: 5,
     title: 'גלישה למטה',
     subtitle: 'L = 13. חלק מהווים מתחתיכם: החבל מושך אתכם ישר אליהם.',
@@ -225,14 +235,15 @@ export const LEVELS: LevelSpec[] = [
     labels: true,
     gaps: [
       { kind: 'hooks', hooks: [h(5, -12), h(9, -10), h(12, -5)] },
-      { kind: 'hooks', hooks: [h(6, -11), h(8, -9), h(11, -7)] },
-      { kind: 'hooks', hooks: [h(3, -4), h(10, -9), h(12, -5)] },
-      { kind: 'hooks', hooks: [h(5, -12), h(12, -6), h(12, 5)] },
+      { kind: 'hooks', hooks: [h(3, -13), h(8, -9), h(11, -7)] },
+      { kind: 'hooks', hooks: [h(4, -13), h(10, -8), h(12, -5)] },
+      { kind: 'hooks', hooks: [h(1, -13), h(5, -12), h(12, 5)] },
     ],
-    lesson: 'מרחק תמיד חיובי: 12² + (−5)² = 144 + 25 = 169 = 13². וו למעלה (12, 5) ווו למטה (12, −5) באותו מרחק.',
+    lesson: 'מרחק תמיד חיובי: 12² + (−5)² = 144 + 25 = 169 = 13². וו למעלה (12, 5) ווו למטה (12, −5) באותו מרחק. ‏1² + (−13)² = 170 > 169: חסר 4 ס״מ.',
   },
   {
     id: 'L6',
+    coach: 'תלת־ממד! x לאורך, z לעומק, ↕ לגובה. קודם x² + z² על הרצפה, ואז מוסיפים ↕².',
     num: 6,
     title: 'החצר (פיתגורס במרחב)',
     subtitle: 'L = 26. הווים מעל חצרות: x לאורך, z לעומק, ↕ לגובה.',
@@ -244,14 +255,15 @@ export const LEVELS: LevelSpec[] = [
     space: true,
     gaps: [
       { kind: 'hooks', hooks: [h(6, 24, { z: 8 }), h(8, 24, { z: 8 })] },
-      { kind: 'hooks', hooks: [h(8, 24, { z: 6 }), h(10, 22, { z: 10 })] },
-      { kind: 'hooks', hooks: [h(12, 20, { z: 9 }), h(12, 20, { z: 12 })] },
+      { kind: 'hooks', hooks: [h(4, 25, { z: 8 }), h(8, 24, { z: 6 })] },
+      { kind: 'hooks', hooks: [h(10, 22, { z: 10 }), h(12, 20, { z: 9 })] },
       { kind: 'hooks', hooks: [h(16, 18, { z: 12 }), h(16, 16, { z: 12 })] },
     ],
     lesson: 'על הרצפה: 6² + 8² = 100, כלומר 10 מ׳. באוויר: 10² + 24² = 676 = 26².',
   },
   {
     id: 'L7',
+    coach: 'כל הווים בטווח! רק זרוע עם זווית ישרה תחזיק. בדקו את צלעות הזרוע: p² + q² = r²?',
     num: 7,
     title: 'הזרוע העקומה',
     subtitle: 'L = 15. כל הווים בטווח, אבל רק זרוע עם זווית ישרה מחזיקה.',
@@ -263,7 +275,7 @@ export const LEVELS: LevelSpec[] = [
     gaps: [
       { kind: 'hooks', hooks: [h(6, 8, { frame: fr(6, 8, 10) }), h(11, 5, { frame: fr(6, 8, 11) })] },
       { kind: 'hooks', hooks: [h(8, 6, { frame: fr(9, 12, 16) }), h(12, 5, { frame: fr(9, 12, 15) })] },
-      { kind: 'hooks', hooks: [h(9, 9, { frame: fr(5, 12, 13) }), h(10, 8, { frame: fr(5, 12, 14) })] },
+      { kind: 'hooks', hooks: [h(9, 9, { frame: fr(5, 12, 14) }), h(10, 8, { frame: fr(5, 12, 13) })] },
       { kind: 'hooks', hooks: [h(7, 10, { frame: fr(8, 15, 17) }), h(12, 6, { frame: fr(8, 15, 18) })] },
       { kind: 'hooks', hooks: [h(10, 9, { frame: fr(7, 24, 25) }), h(12, 8, { frame: fr(20, 21, 29) })] },
     ],
@@ -271,6 +283,7 @@ export const LEVELS: LevelSpec[] = [
   },
   {
     id: 'L8',
+    coach: 'בלי מספרים. השורה הלבנה = ↔, העמודה בצבע הוו = ↕. כל נורה מטר, נורה גדולה = 5.',
     num: 8,
     title: 'ריצת לילה',
     subtitle: 'L = 15. בלי מספרים ובלי רמזים. ספרו נורות: כל נורה מטר.',
@@ -281,10 +294,10 @@ export const LEVELS: LevelSpec[] = [
     labels: false,
     gaps: [
       { kind: 'hooks', hooks: [h(9, 12), h(10, 11), h(12, 10)] },
-      { kind: 'hooks', hooks: [h(6, 6), h(12, 9), h(13, 8)] },
-      { kind: 'hooks', hooks: [h(5, 12, { z: 0 }), h(8, 12, { z: 6 })] },
-      { kind: 'hooks', hooks: [h(9, 12), h(10, 12)] },
-      { kind: 'hooks', hooks: [h(11, 10), h(12, 10)] },
+      { kind: 'hooks', hooks: [h(5, 15), h(12, 9), h(13, 8)] },
+      { kind: 'hooks', hooks: [h(2, 15, { z: 0 }), h(5, 12, { z: 0 }), h(8, 12, { z: 6 })] },
+      { kind: 'hooks', hooks: [h(7, 14), h(9, 12), h(10, 12)] },
+      { kind: 'hooks', hooks: [h(6, 14), h(11, 10)] },
     ],
     lesson: 'ספרתם 9 ו־12 (225), 10 ו־11 (221), ו־12 ו־10 (244 > 225). אותו חשבון, בלי מספרים על המסך.',
   },

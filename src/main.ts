@@ -26,6 +26,8 @@ const ui = {
   stars: [$('st1'), $('st2'), $('st3')],
   levelChip: $('levelChip'),
   toast: $('toast'),
+  coach: $('coach'),
+  coachText: $('coachText'),
   starPop: $('starPop'),
   prompt: $('prompt'),
   hintBtn: $<HTMLButtonElement>('btnHint'),
@@ -126,6 +128,24 @@ async function loadAssets(): Promise<void> {
     load('water-tank.glb')
       .then((g) => void ((assets.tank = normalise(g.scene, 4.4, 'y')), (assetStatus.tank = 'ok')))
       .catch(() => void (assetStatus.tank = 'missing')),
+    load('pigeon-flying.glb')
+      .then((g) => {
+        // wingspan about 0.75 m; keep the skinned scene intact for cloning
+        const box = new THREE.Box3().setFromObject(g.scene);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        g.scene.scale.setScalar(0.75 / Math.max(size.x, size.z));
+        g.scene.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (m.isMesh) {
+            m.castShadow = true;
+            m.frustumCulled = false;
+          }
+        });
+        assets.flyer = { scene: g.scene, clips: g.animations };
+        assetStatus.pigeonFlying = `ok (${g.animations.length} clips, bones flapped in code)`;
+      })
+      .catch(() => void (assetStatus.pigeonFlying = 'missing')),
     load('pigeon.glb')
       .then((g) => void ((assets.pigeon = normalise(g.scene, 0.42, 'y')), (assetStatus.pigeon = 'ok')))
       .catch(() => void (assetStatus.pigeon = 'missing')),
@@ -152,6 +172,10 @@ let auto: AutoPlayer | null = null;
 let shortTag: { pos: THREE.Vector3; text: string; t: number } | null = null;
 let pendingHook: string | null = null;
 let pendingJump = false;
+let pendingTile: number | null = null;
+let debugCam: { pos: THREE.Vector3; look: THREE.Object3D } | null = null;
+let hoverTile: number | null = null;
+const coached = new Set<string>();
 
 const ropeMesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 6, 1), new THREE.MeshStandardMaterial({ color: 0xff9a35, emissive: 0xc65a10, emissiveIntensity: 0.7, roughness: 0.5 }));
 ropeMesh.visible = false;
@@ -177,6 +201,18 @@ function ltrMath(text: string): string {
   return esc.replace(/([−\-(]?[0-9a-zA-Z√][0-9a-zA-Z²³√+\-−=≤≥≠×·().,:\s]*[0-9a-zA-Z²)]|&[lg]t;)/g, (m) => (/[0-9²]/.test(m) && m.trim().length > 1 ? `<bdi dir="ltr">${m.trim()}</bdi> ` : m));
 }
 
+function showCoach(text: string): void {
+  ui.coachText.innerHTML = ltrMath(text);
+  ui.coach.classList.remove('hidden');
+}
+function hideCoach(): void {
+  ui.coach.classList.add('hidden');
+}
+$('coachOk').addEventListener('click', (e) => {
+  e.stopPropagation();
+  hideCoach();
+});
+
 // ---------- levels ----------
 function loadLevel(i: number): void {
   levelIdx = i;
@@ -199,6 +235,8 @@ function loadLevel(i: number): void {
   ui.hintText.textContent = level.hints ? 'רמז' : 'בלי רמזים';
   ui.explain.classList.add('hidden');
   ui.toast.classList.add('hidden');
+  hideCoach();
+  coached.clear();
   camPos.set(sim.p.x + 2, sim.p.y + 4, sim.p.z + 18);
   camLook.set(sim.p.x + 4, sim.p.y + 1.5, sim.p.z);
 }
@@ -305,7 +343,9 @@ window.addEventListener('keydown', (e) => {
     pendingJump = true;
     e.preventDefault();
   }
-  if (k >= '1' && k <= '3') {
+  if (sim.state === 'strip' && k >= '0' && k <= '9') {
+    pendingTile = k === '0' ? 10 : Number(k);
+  } else if (k >= '1' && k <= '3') {
     const hk = sim.choices().find((h) => h.num === Number(k));
     if (hk) pendingHook = hk.id;
   }
@@ -320,6 +360,25 @@ window.addEventListener('blur', () => {
 function screenOf(v: THREE.Vector3): { x: number; y: number; behind: boolean } {
   const p = v.clone().project(camera);
   return { x: ((p.x + 1) / 2) * innerWidth, y: ((1 - p.y) / 2) * innerHeight, behind: p.z > 1 };
+}
+
+/** Strip tile under a screen point (tiles ahead of the runner only). */
+function tileAt(x: number, y: number, radius: number): number | null {
+  const d = sim.decision;
+  if (!d?.strip || sim.state !== 'strip') return null;
+  let best: number | null = null;
+  let bestD = radius;
+  for (let n = 1; n <= 10; n++) {
+    const tx = d.strip.foot - n;
+    if (tx < sim.p.x - 0.01) continue;
+    const s = screenOf(new THREE.Vector3(tx, d.strip.top, d.P.z + 0.4));
+    const dd = Math.hypot(s.x - x, s.y - y);
+    if (dd < bestD) {
+      bestD = dd;
+      best = n;
+    }
+  }
+  return best;
 }
 
 function hookAt(x: number, y: number, radius: number): Hook | null {
@@ -341,16 +400,25 @@ function hookAt(x: number, y: number, radius: number): Hook | null {
 canvas.addEventListener('pointermove', (e) => {
   if (e.pointerType !== 'mouse') return;
   hoverId = hookAt(e.clientX, e.clientY, 110)?.id ?? null;
-  canvas.style.cursor = hoverId ? 'pointer' : 'default';
+  hoverTile = tileAt(e.clientX, e.clientY, 60);
+  canvas.style.cursor = hoverId || hoverTile ? 'pointer' : 'default';
 });
 canvas.addEventListener('pointerdown', (e) => {
   sfx.unlock();
   if (screen === 'intro') return startPlay();
   if (screen !== 'play') return;
+  hideCoach();
   if (sim.state === 'decide') {
     const hk = hookAt(e.clientX, e.clientY, isTouch ? 140 : 110);
     if (hk) pendingHook = hk.id;
     return;
+  }
+  if (sim.state === 'strip') {
+    const t = tileAt(e.clientX, e.clientY, isTouch ? 70 : 60);
+    if (t) {
+      pendingTile = t;
+      return;
+    }
   }
   // anywhere else: jump on strips, let go early (flip) while swinging
   pendingJump = true;
@@ -365,6 +433,10 @@ $('btnPause').addEventListener('click', () => togglePause());
 ui.muteBtn.addEventListener('click', () => toggleMute());
 ui.hintBtn.addEventListener('click', () => toggleHint());
 $('introGo').addEventListener('click', () => startPlay());
+ui.intro.addEventListener('pointerdown', () => {
+  sfx.unlock();
+  startPlay();
+});
 $('btnStart').addEventListener('click', () => {
   sfx.unlock();
   const first = LEVELS.findIndex((l) => !best[l.id]);
@@ -443,9 +515,20 @@ function updateCamera(dt: number): void {
     look = p.clone().add(new THREE.Vector3(2, 2, 0));
     dist = 14;
   } else if (sim.state === 'finished') {
-    look = p.clone().add(new THREE.Vector3(0, 1.2, 0));
+    look = p.clone().add(new THREE.Vector3(1.5, 1.6, 0));
     dist = 7;
-    height = 0.8;
+    height = 1.6;
+    yaw = 1.05;
+    follow = 3;
+  }
+  // final stretch: swing behind the runner so the finish arch faces both the runner and the player
+  const fin = sim.course.finish;
+  if (sim.state === 'run' && sim.nextEvent?.type === 'finish' && fin.x - sim.p.x < 30) {
+    look = new THREE.Vector3(Math.min(fin.x, sim.p.x + 6), sim.p.y + 2, sim.p.z);
+    dist = 10;
+    height = 3;
+    yaw = 1.05;
+    follow = 3;
   }
   const off = new THREE.Vector3(Math.sin(yaw) * -dist, height, Math.cos(yaw) * dist);
   const want = look.clone().add(off);
@@ -494,11 +577,11 @@ function updateHud(dt: number): void {
   const st = sim.stars();
   ui.stars.forEach((el, i) => el.classList.toggle('on', i < st));
   const strip = sim.state === 'strip';
-  ui.jumpBtn.classList.toggle('hidden', !strip || screen !== 'play');
+  ui.jumpBtn.classList.toggle('hidden', !strip || screen !== 'play' || sim.stripTarget !== null);
   let prompt = '';
   if (screen === 'play') {
     if (sim.state === 'decide') prompt = level.labels ? (isTouch ? 'הקישו על הוו שהחבל מגיע אליו' : 'לחצו על הוו שהחבל מגיע אליו (או 1 2 3)') : 'ספרו נורות: כל נורה מטר';
-    else if (strip) prompt = isTouch ? 'הקישו "קפיצה" כשהמספר קטן מספיק' : 'Space: קפיצה כשהמספר קטן מספיק';
+    else if (strip) prompt = sim.stripWaiting ? 'הקישו על מספר על הפיגום: משם תקפצו' : sim.stripTarget ? `רצים למספר ${sim.stripTarget}…` : 'קפיצה! (או הקישו על מספר)';
   }
   ui.prompt.textContent = prompt;
   ui.prompt.classList.toggle('hidden', !prompt);
@@ -512,7 +595,13 @@ function updateHud(dt: number): void {
 
 function legsLabel(hk: Hook): string {
   const s = hk.spec;
-  if (!level.labels) return '<span>↔ ? מ׳</span><br><span>↕ ? מ׳</span>';
+  if (!level.labels) return '↔ ספרו נורות<br>↕ ספרו נורות';
+  if (s.frame) {
+    const f = s.frame;
+    let html = `<span>✓ בטווח</span><br>זרוע: <bdi dir="ltr">${f.post} · ${f.beam} · ${f.brace}</bdi>`;
+    if (hintOn) html += `<span class="hint"><bdi dir="ltr">${f.post}² + ${f.beam}² = ? · ${f.brace}² = ?</bdi></span>`;
+    return html;
+  }
   const up = s.b < 0 ? `${-s.b} מ׳ ↓` : `${s.b} מ׳ ↕`;
   if (s.z !== undefined && s.z !== 0) return `<bdi dir="ltr">x ${s.a} · z ${s.z}</bdi><br>${up}`;
   let html = `${s.a} מ׳ ↔<br>${up}`;
@@ -547,7 +636,7 @@ function updateTags(): void {
       el.style.top = `${Math.max(innerHeight < 500 ? 46 : 64, Math.min(...placed.map((q) => q.s.y)) - 100)}px`;
       el.classList.toggle('used', sim.tried.has(hk.id));
       el.classList.toggle('focus', hoverId === hk.id);
-      const html = `<div class="num">${hk.num}</div><div class="legs">${legsLabel(hk)}</div>`;
+      const html = `<div class="num c${hk.num}">${hk.num}</div><div class="legs">${legsLabel(hk)}</div>`;
       if (el.dataset.html !== html) {
         el.innerHTML = html;
         el.dataset.html = html;
@@ -564,13 +653,15 @@ function updateOverlay(): void {
   const d = sim.decision;
   if (d && d.kind === 'hooks' && sim.state === 'decide' && screen === 'play') {
     const H = new THREE.Vector3(d.P.x, d.P.y, d.P.z);
+    // keep about the same on-screen line width however far the camera framed the gap
+    overlay.thickness = Math.max(1, (camera.position.distanceTo(H) / 16) * (innerHeight < 500 ? 1.5 : 1));
     overlay.label(H.clone().add(new THREE.Vector3(0, -1.4, 0)), `L = ${level.L}`, 'gauntlet', camera, w, h);
-    if (level.labels) {
+    {
       for (const hk of sim.choices()) {
         const A = new THREE.Vector3(hk.pos.x, hk.pos.y, hk.pos.z);
         const corner = new THREE.Vector3(A.x, H.y, A.z);
-        const focus = hoverId === hk.id || sim.choices().length === 1;
-        const r = focus ? 0.06 : 0.03;
+        const focus = (hoverId === hk.id || sim.choices().length === 1) && level.labels;
+        const r = !level.labels ? 0.025 : focus ? 0.07 : isTouch ? 0.05 : 0.04;
         if (hk.spec.z) {
           // space: x leg, z leg on the floor (dashed diagonal), then up to the hook
           const cx = new THREE.Vector3(A.x, H.y, H.z);
@@ -610,7 +701,19 @@ function updateOverlay(): void {
     const A = new THREE.Vector3(hk.pos.x, hk.pos.y, hk.pos.z);
     overlay.label(A.clone().add(new THREE.Vector3(1.6, -0.6, 0)), level.labels ? `↕ ${st.b} מ׳` : '↕ ?', 'gauntlet', camera, w, h);
     const head = new THREE.Vector3(sim.p.x, sim.p.y + 2.3, sim.p.z);
-    if (sim.state === 'strip') overlay.label(head, level.labels ? `↔ ${sim.stripTile} מ׳` : '↔ ?', 'short', camera, w, h);
+    if (sim.state === 'strip') {
+      const n = hoverTile ?? sim.stripTarget ?? sim.stripTile;
+      const Hn = new THREE.Vector3(st.foot - n, st.top + 1, d.P.z);
+      const corner = new THREE.Vector3(A.x, Hn.y, A.z);
+      overlay.thickness = Math.max(1, camera.position.distanceTo(A) / 16);
+      overlay.line(Hn, corner, false, 0.06);
+      overlay.line(corner, A, false, 0.06);
+      overlay.line(Hn, A, true, 0.06);
+      overlay.rightAngle(corner, new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0), 0.55);
+      overlay.label(Hn.clone().lerp(corner, 0.5), level.labels ? `↔ ${n} מ׳` : '↔ ?', 'short', camera, w, h, 0, 22);
+      overlay.label(Hn.clone().lerp(A, 0.5), '?', 'q', camera, w, h, -18, -18);
+      if (!sim.stripWaiting) overlay.label(head, `${sim.stripTile}`, 'gauntlet', camera, w, h);
+    }
     overlay.label(new THREE.Vector3(sim.p.x, sim.p.y - 0.9, sim.p.z), `L = ${level.L}`, 'gauntlet', camera, w, h);
   }
   if (shortTag) {
@@ -687,9 +790,20 @@ function handleEvents(): void {
       case 'decide':
         sfx.focusOn();
         hoverId = null;
+        if (sim.decision && !coached.has('first')) {
+          coached.add('first');
+          showCoach(level.coach);
+        }
+        break;
+      case 'strip':
+        if (level.coachStrip && !coached.has('strip')) {
+          coached.add('strip');
+          showCoach(level.coachStrip);
+        }
         break;
       case 'fire':
         sfx.fire();
+        hideCoach();
         ui.explain.classList.add('hidden');
         break;
       case 'attach': {
@@ -767,9 +881,11 @@ function handleEvents(): void {
 // ---------- frame ----------
 function frame(dt: number): void {
   if (screen === 'play') {
-    let inp: Input = { hook: pendingHook, jump: pendingJump };
+    let inp: Input = { hook: pendingHook, jump: pendingJump, tile: pendingTile };
+    if (pendingHook || pendingJump || pendingTile) hideCoach();
     pendingHook = null;
     pendingJump = false;
+    pendingTile = null;
     if (auto) inp = auto.input();
     if (inp.hook) hoverId = inp.hook;
     sim.update(dt, inp);
@@ -781,8 +897,13 @@ function frame(dt: number): void {
   // bullet time slows the visuals, not the decision clock
   const visDt = sim.state === 'decide' ? dt * 0.05 : dt;
   const ropeTarget = sim.ropeTip ? new THREE.Vector3(sim.ropeTip.x, sim.ropeTip.y, sim.ropeTip.z) : null;
-  hero.update(visDt, sim, ropeTarget);
-  updateCamera(dt);
+  hero.update(visDt, sim, ropeTarget, screen !== 'play' && screen !== 'paused');
+  if (debugCam) {
+    const lp = new THREE.Vector3();
+    debugCam.look.getWorldPosition(lp);
+    camera.position.copy(lp).add(debugCam.pos);
+    camera.lookAt(lp);
+  } else updateCamera(dt);
   world?.update(visDt, performance.now() / 1000, sim, new THREE.Vector3(sim.p.x, sim.p.y, sim.p.z));
   updateRope();
   updateOverlay();
@@ -879,6 +1000,7 @@ window.render_game_to_text = () => {
           kind: d.kind,
           P: d.P,
           stripTile: d.kind === 'strip' ? sim.stripTile : undefined,
+          stripWaiting: d.kind === 'strip' ? sim.stripWaiting : undefined,
           maxTile: d.strip?.maxN,
           hooks: d.hooks.map((hk) => ({
             num: hk.num,
@@ -933,6 +1055,7 @@ window.__rh = {
   },
   hover: (num: number) => (hoverId = sim.decision?.hooks.find((h) => h.num === num)?.id ?? null),
   jump: () => (pendingJump = true),
+  tapTile: (n: number) => (pendingTile = n),
   autoplay: (policy: 'best' | 'wrong' = 'best') => (auto = new AutoPlayer(sim, policy === 'best' ? bestPolicy : wrongFirstPolicy)),
   stopAuto: () => (auto = null),
   until: (state: string, max = 3000) => {
@@ -941,6 +1064,20 @@ window.__rh = {
     return sim.state === state;
   },
   realtime: () => (manualTime = false),
+  get world() {
+    return world;
+  },
+  get camera() {
+    return camera;
+  },
+  /** close-up on the first flying pigeon (debug screenshots) */
+  watchBird: (on = true) => {
+    let bird: THREE.Object3D | null = null;
+    world?.root.traverse((o) => {
+      if (!bird && (o as THREE.SkinnedMesh).isSkinnedMesh) bird = o;
+    });
+    debugCam = on && bird ? { pos: new THREE.Vector3(0.9, 0.5, 1.4), look: bird } : null;
+  },
 };
 
 // ---------- boot ----------

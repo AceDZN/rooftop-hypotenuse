@@ -4,20 +4,15 @@
 import * as THREE from 'three';
 import { HAND, type Course, type Decision, type Hook } from './levels.ts';
 import type { Sim } from './sim.ts';
+import { Birds, type FlyerSource } from './birds.ts';
 import { bandTexture, clothTexture, facadeGlow, facadeTexture, labelTexture, rustTexture, signTexture, stripeTexture } from './textures.ts';
 
 export interface PropAssets {
   heater?: THREE.Object3D;
   tank?: THREE.Object3D;
   pigeon?: THREE.Object3D;
-}
-
-interface Pigeon {
-  obj: THREE.Object3D;
-  home: THREE.Vector3;
-  vel: THREE.Vector3;
-  flying: number;
-  phase: number;
+  /** Tripo flying pigeon (wings spread), optionally with a flap clip */
+  flyer?: FlyerSource;
 }
 
 export interface HookView {
@@ -39,6 +34,7 @@ export interface World {
   dispose(): void;
 }
 
+export const HOOK_COLORS = [0xff8a2a, 0x2fd0e0, 0xff5fa8];
 const TINTS = [0xfff7ea, 0xf3ecdf, 0xfbefd9, 0xeef0ea, 0xf6e6d6, 0xf1f1ee, 0xf8e9e0];
 
 function seeded(seed: number): () => number {
@@ -55,7 +51,7 @@ function buildingMaterial(map: THREE.Texture, night: boolean, roofColor: number,
   if (glow) {
     m.emissive = new THREE.Color(0xffffff);
     m.emissiveMap = glow;
-    m.emissiveIntensity = 1.1;
+    m.emissiveIntensity = 0.55;
   }
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uRoof = { value: new THREE.Color(roofColor) };
@@ -125,7 +121,7 @@ function skyMaterial(night: boolean, sunDir: THREE.Vector3): THREE.ShaderMateria
         c += uSunCol * (pow(d, 700.0) * 2.5 + pow(d, 20.0) * 0.35 * (1.0 - uNight) + pow(d, 4.0) * 0.12);
         if (uNight > 0.5) {
           vec2 sp = floor(vDir.xz / (vDir.y + 0.3) * 260.0);
-          c += vec3(step(0.996, hash(sp)) * smoothstep(0.1, 0.4, h)) * 0.8;
+          c += vec3(step(0.9985, hash(sp)) * smoothstep(0.15, 0.5, h)) * 0.6;
         }
         gl_FragColor = vec4(c, 1.0);
       }`,
@@ -220,9 +216,10 @@ export function buildWorld(course: Course, assets: PropAssets): World {
     return t;
   }
 
-  const bulbGeo = track(new THREE.SphereGeometry(0.1, 8, 6));
-  const bulbs: THREE.Matrix4[] = [];
-  const bulb = (x: number, y: number, z: number) => bulbs.push(new THREE.Matrix4().makeTranslation(x, y, z));
+  const bulbGeo = track(new THREE.SphereGeometry(0.13, 10, 8));
+  const bulbs: { m: THREE.Matrix4; c: THREE.Color }[] = [];
+  const bulb = (x: number, y: number, z: number, color = 0xfff1c0, size = 1) =>
+    bulbs.push({ m: new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(size, size, size)), c: new THREE.Color(color) });
 
   /** Pole with 1 m red/white bands aligned to a reference height (the grapple hand), so you can count. */
   function bandedPole(x: number, z: number, y0: number, y1: number, refY: number, r = 0.17): void {
@@ -236,7 +233,6 @@ export function buildWorld(course: Course, assets: PropAssets): World {
     m.position.set(x, (y0 + y1) / 2, z);
     m.castShadow = true;
     root.add(m);
-    if (night) for (let y = refY + 1; y <= y1; y += 1) bulb(x + r + 0.08, y, z + 0.1);
   }
 
   // ---------- buildings ----------
@@ -323,15 +319,21 @@ export function buildWorld(course: Course, assets: PropAssets): World {
       rod(new THREE.Vector3(x0, cy, cz), new THREE.Vector3(x1, cy, cz), 0.035, cableMat);
       for (const hk of list) {
         rod(new THREE.Vector3(hk.pos.x, cy, cz), new THREE.Vector3(hk.pos.x, hk.pos.y + 0.45, hk.pos.z), 0.03, cableMat);
-        if (night) for (let y = refY + 1; y < hk.pos.y - 0.2; y += 1) bulb(hk.pos.x, y, hk.pos.z - 0.15);
       }
-      if (night) for (let x = Math.ceil(x0); x <= x1; x += 1) bulb(x, cy - 0.15, cz);
     }
     if (night && d.kind === 'hooks') {
-      // a light string at hand height from the decision point: one bulb per metre
+      // the only lights that matter: a warm ruler at hand height (one bulb per metre, every 5th big)
+      // and one column per hook in that hook's colour, from the ruler up to the hook
       const far = Math.max(...d.hooks.map((hk) => hk.pos.x));
-      for (let k = 1; d.P.x + k <= far + 0.01; k++) bulb(d.P.x + k, refY, d.P.z - 0.2);
-      rod(new THREE.Vector3(d.P.x, refY + 0.08, d.P.z - 0.2), new THREE.Vector3(far, refY + 0.08, d.P.z - 0.2), 0.012, cableMat);
+      for (let k = 1; d.P.x + k <= far + 0.01; k++) bulb(d.P.x + k, refY, d.P.z, 0xfff1c0, k % 5 === 0 ? 1.7 : 1);
+      rod(new THREE.Vector3(d.P.x, refY + 0.12, d.P.z), new THREE.Vector3(far, refY + 0.12, d.P.z), 0.012, cableMat);
+      for (const hk of d.hooks) {
+        const col = HOOK_COLORS[(hk.num - 1) % HOOK_COLORS.length];
+        const up = Math.sign(hk.pos.y - refY);
+        const n = Math.round(Math.abs(hk.pos.y - refY));
+        for (let k = 1; k < n; k++) bulb(hk.pos.x, refY + up * k, hk.pos.z, col, k % 5 === 0 ? 1.7 : 1);
+        rod(new THREE.Vector3(hk.pos.x, refY, hk.pos.z - 0.05), new THREE.Vector3(hk.pos.x, hk.pos.y - 0.3 * up, hk.pos.z - 0.05), 0.012, cableMat);
+      }
     }
     for (const hk of d.hooks) {
       const pos = new THREE.Vector3(hk.pos.x, hk.pos.y, hk.pos.z);
@@ -448,14 +450,15 @@ export function buildWorld(course: Course, assets: PropAssets): World {
   })();
   const flagMat = track(new THREE.MeshStandardMaterial({ map: checker, side: THREE.DoubleSide }));
   const flags: THREE.Mesh[] = [];
-  for (const sx of [-2.6, 2.6]) {
+  // the arch spans the running line (posts in front of and behind the runner), banner facing the runner
+  for (const sz of [-2.6, 2.6]) {
     const post = new THREE.Mesh(cylGeo, postMat);
     post.scale.set(0.16, 4.4, 0.16);
-    post.position.set(f.x + sx, f.y + 2.2, f.z - 0.5);
+    post.position.set(f.x, f.y + 2.2, f.z + sz);
     post.castShadow = true;
     root.add(post);
     const flag = new THREE.Mesh(track(new THREE.PlaneGeometry(1.1, 0.75)), flagMat);
-    flag.position.set(f.x + sx * 1.25, f.y + 4.7, f.z - 0.5);
+    flag.position.set(f.x + 0.6, f.y + 4.7, f.z + sz);
     root.add(flag);
     flags.push(flag);
   }
@@ -463,7 +466,8 @@ export function buildWorld(course: Course, assets: PropAssets): World {
     track(new THREE.PlaneGeometry(5.2, 1.3)),
     track(new THREE.MeshStandardMaterial({ map: track(signTexture('סיום', '#c8382a', '#fff8ea')), side: THREE.DoubleSide, emissive: 0x551100, emissiveIntensity: night ? 1.5 : 0.25 })),
   );
-  banner.position.set(f.x, f.y + 3.75, f.z - 0.5);
+  banner.position.set(f.x, f.y + 3.75, f.z);
+  banner.rotation.y = -Math.PI / 2;
   root.add(banner);
 
   // ---------- background city behind the course ----------
@@ -504,7 +508,8 @@ export function buildWorld(course: Course, assets: PropAssets): World {
   }
   const busyX = (x: number) => course.decisions.some((d) => d.edge !== null && Math.abs(x - d.edge) < 4) || Math.abs(x - f.x) < 5;
   const laundry: THREE.Mesh[] = [];
-  const pigeons: Pigeon[] = [];
+  const birds = new Birds(assets.flyer ?? null, rand);
+  root.add(birds.group);
   for (const r of course.roofs) {
     if (r.kind !== 'roof') continue;
     for (let x = r.x0 + 2.5; x < r.x1 - 2; x += 5 + rand() * 4) {
@@ -535,7 +540,7 @@ export function buildWorld(course: Course, assets: PropAssets): World {
       for (let i = 0; i < n; i++) {
         const x = r.x0 + 1 + rand() * (r.x1 - r.x0 - 2);
         const o = placeProp(assets.pigeon, x, r.top + 0.45, r.z0 + 0.15, Math.PI / 2 + (rand() - 0.5), 0.9 + rand() * 0.3);
-        if (o) pigeons.push({ obj: o, home: o.position.clone(), vel: new THREE.Vector3(), flying: 0, phase: rand() * 10 });
+        if (o) birds.addPerched(o);
       }
     }
   }
@@ -547,11 +552,17 @@ export function buildWorld(course: Course, assets: PropAssets): World {
     placeProp(i % 3 ? assets.heater : assets.tank, p.x, s.y, p.z, rand() * 6.28);
   }
 
+  if (!night) birds.addCircling(new THREE.Vector3(course.start.x + 10, course.start.y, course.start.z - 10), 4);
+
   if (bulbs.length) {
-    const inst = new THREE.InstancedMesh(bulbGeo, bulbMat, bulbs.length);
-    bulbs.forEach((m, i) => inst.setMatrixAt(i, m));
+    const inst = new THREE.InstancedMesh(bulbGeo, track(new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false })), bulbs.length);
+    bulbs.forEach((b, i) => {
+      inst.setMatrixAt(i, b.m);
+      inst.setColorAt(i, b.c.multiplyScalar(1.6));
+    });
     root.add(inst);
   }
+  void bulbMat;
 
   const broken = new Map<string, number>();
 
@@ -582,29 +593,7 @@ export function buildWorld(course: Course, assets: PropAssets): World {
     }
     for (const [i, c] of laundry.entries()) c.rotation.y = Math.sin(t * 1.7 + i) * 0.25;
     for (const [i, fl] of flags.entries()) fl.rotation.y = Math.sin(t * 3 + i) * 0.25;
-    for (const p of pigeons) {
-      if (p.flying > 0) {
-        p.flying -= dt;
-        p.vel.y += dt * 1.5;
-        p.obj.position.addScaledVector(p.vel, dt);
-        p.obj.rotation.z = Math.sin(t * 30 + p.phase) * 0.35;
-        if (p.flying <= 0) {
-          p.obj.position.copy(p.home);
-          p.obj.rotation.z = 0;
-        }
-      } else {
-        p.obj.rotation.x = Math.max(0, Math.sin(t * 2.3 + p.phase)) * 0.3;
-        if (p.obj.position.distanceTo(playerPos) < 3.5) scatter(p, playerPos);
-      }
-    }
-  }
-
-  function scatter(p: Pigeon, from: THREE.Vector3): void {
-    if (p.flying > 0) return;
-    const away = p.obj.position.clone().sub(from).setY(0).normalize();
-    p.vel.set(away.x * 6 + 2, 4 + rand() * 2, away.z * 3 - 3);
-    p.obj.rotation.y = Math.atan2(-p.vel.z, p.vel.x) + Math.PI / 2;
-    p.flying = 7;
+    birds.update(dt, t, playerPos);
   }
 
   return {
@@ -616,7 +605,7 @@ export function buildWorld(course: Course, assets: PropAssets): World {
       if (c) c.wobble = 1;
     },
     scatterPigeons(near: THREE.Vector3) {
-      for (const p of pigeons) if (p.obj.position.distanceTo(near) < 10) scatter(p, near);
+      birds.scatter(near, 10);
     },
     dispose() {
       for (const d of disposables) d.dispose();

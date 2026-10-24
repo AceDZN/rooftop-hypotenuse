@@ -22,7 +22,7 @@ export class AutoPlayer {
     }
     if (s.state === 'strip' && s.decision?.strip) {
       const want = this.stripTiles[s.decision.id] ?? s.decision.strip.maxN;
-      if (s.stripTile === want) return { ...NO_INPUT, jump: true };
+      if (s.stripWaiting) return { ...NO_INPUT, tile: want };
     }
     return NO_INPUT;
   }

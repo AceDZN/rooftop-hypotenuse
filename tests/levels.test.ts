@@ -62,7 +62,7 @@ test('L7: only right-angled brackets hold; every bracket hook is in reach', () =
     }
   }
   const verdicts = l.gaps.flatMap((g) => (g.kind === 'hooks' ? g.hooks.map((s) => `${s.frame!.post}-${s.frame!.beam}-${s.frame!.brace}:${holds(s)}`) : []));
-  assert.deepEqual(verdicts, ['6-8-10:true', '6-8-11:false', '9-12-16:false', '9-12-15:true', '5-12-13:true', '5-12-14:false', '8-15-17:true', '8-15-18:false', '7-24-25:true', '20-21-29:true']);
+  assert.deepEqual(verdicts, ['6-8-10:true', '6-8-11:false', '9-12-16:false', '9-12-15:true', '5-12-14:false', '5-12-13:true', '8-15-17:true', '8-15-18:false', '7-24-25:true', '20-21-29:true']);
 });
 
 test('every hook decision has a legal hook, and every level has wrong ones', () => {
@@ -94,4 +94,26 @@ test('transfer level hides numbers and hints', () => {
   assert.equal(l.labels, false);
   assert.equal(l.hints, false);
   assert.equal(l.night, true);
+});
+
+test('the answer is not always hook 1: wrong hooks sit in front of right ones often enough', () => {
+  for (const l of LEVELS) {
+    const ds = buildCourse(l).decisions.filter((d) => d.kind === 'hooks' && d.hooks.some((h) => !h.ok));
+    const notFirst = ds.filter((d) => {
+      const first = [...d.hooks].sort((p, q) => p.num - q.num)[0];
+      return !first.ok;
+    }).length;
+    assert.ok(notFirst / ds.length >= 0.3, `${l.id}: hook 1 is wrong in only ${notFirst}/${ds.length} decisions`);
+  }
+  // across the whole game, the perfect hook is not always the last or the first number
+  const pos = { first: 0, middle: 0, last: 0 };
+  for (const l of LEVELS)
+    for (const d of buildCourse(l).decisions) {
+      if (d.kind !== 'hooks' || d.hooks.length < 2) continue;
+      const p = d.hooks.find((h) => h.perfect)!.num;
+      if (p === 1) pos.first++;
+      else if (p === d.hooks.length) pos.last++;
+      else pos.middle++;
+    }
+  assert.ok(pos.first > 3 && pos.last > 3 && pos.middle > 3, JSON.stringify(pos));
 });

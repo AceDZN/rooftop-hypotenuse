@@ -10,6 +10,7 @@ import { NO_INPUT, Sim, type Input, type Outcome } from './sim.ts';
 import { buildWorld, type PropAssets, type World } from './world.ts';
 import { Hero } from './hero.ts';
 import { Overlay } from './overlay.ts';
+import { initHost, parseLevelParam, postToHost } from './host.ts';
 import { Sfx } from './audio.ts';
 import { fmt } from './rules.ts';
 import { AutoPlayer, bestPolicy, wrongFirstPolicy } from './autoplay.ts';
@@ -156,6 +157,7 @@ async function loadAssets(): Promise<void> {
 type Screen = 'title' | 'intro' | 'play' | 'paused' | 'results';
 let screen: Screen = 'title';
 let levelIdx = 0;
+let playStartedAt = 0;
 let level: LevelSpec = LEVELS[0];
 let sim = new Sim(level);
 let world: World | null = null;
@@ -259,6 +261,8 @@ function startPlay(): void {
   ui.intro.classList.add('hidden');
   screen = 'play';
   sfx.unlock();
+  playStartedAt = performance.now();
+  postToHost({ type: 'level-start', level: levelIdx + 1 });
 }
 
 function startLevel(i: number): void {
@@ -728,6 +732,7 @@ function updateOverlay(): void {
 function showResults(): void {
   screen = 'results';
   const stars = sim.stars();
+  postToHost({ type: 'level-complete', level: levelIdx + 1, stars, durationMs: Math.round(performance.now() - playStartedAt) });
   if (stars > (best[level.id] ?? 0)) {
     best[level.id] = stars;
     store.set('stars', best);
@@ -1081,8 +1086,15 @@ window.__rh = {
 };
 
 // ---------- boot ----------
-loadLevel(0);
-showTitle();
+initHost('rooftop-hypotenuse');
+// `?level=N` (a workbook lesson's link) opens that level's intro, skipping the title.
+const deepLevel = parseLevelParam(location.search, LEVELS.length);
+if (deepLevel === null) {
+  loadLevel(0);
+  showTitle();
+} else {
+  startLevel(deepLevel);
+}
 requestAnimationFrame(loop);
 loadAssets().then(() => {
   if (world) {
@@ -1091,4 +1103,5 @@ loadAssets().then(() => {
   }
   world = buildWorld(sim.course, assets);
   scene.add(world.root);
+  postToHost({ type: 'ready' });
 });
